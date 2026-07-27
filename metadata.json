@@ -1,0 +1,8 @@
+{
+  "name": "Encuesta Instituciones Educativas Antioquia",
+  "description": "Censo de dispositivos tecnológicos y recursos de conectividad para rectores de sedes principales y asociadas en Antioquia, Colombia.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
