@@ -1,8 +1,35 @@
+# ── Dependencias ──────────────────────────────────────────────────────────
 node_modules/
-build/
+
+# ── Builds ────────────────────────────────────────────────────────────────
 dist/
-coverage/
+server.js
+
+# ── Variables de entorno ───────────────────────────────────────────────────
+# NUNCA suba el .env real al repositorio
+.env
+.env.local
+.env.production
+
+# ── Datos de runtime ──────────────────────────────────────────────────────
+# Estos archivos son generados en producción y no deben estar en el repo.
+# institutions.json se regenera desde src/data/initialInstitutions.ts
+data/submissions.json
+data/custom_questions.json
+data/institutions.json
+data/*.bak.*
+
+# ── Sistema operativo ──────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────────────────────
 *.log
-.env*
-!.env.example
+npm-debug.log*
+
+# ── Lockfile: use solo uno (npm). Elimine bun.lock del repositorio. ───────
+bun.lock

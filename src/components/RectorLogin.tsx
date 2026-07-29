@@ -7,25 +7,24 @@ interface RectorLoginProps {
 }
 
 export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
-  const [nombre, setNombre] = useState("");
-  const [cargo, setCargo] = useState("Rector(a)");
-  const [telefono, setTelefono] = useState("");
+  const [nombre, setNombre]                               = useState("");
+  const [cargo, setCargo]                                 = useState("Rector(a)");
+  const [telefono, setTelefono]                           = useState("");
   const [codigoEstablecimiento, setCodigoEstablecimiento] = useState("");
-  
-  const [matchedSedes, setMatchedSedes] = useState<Sede[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasSearched, setHasSearched] = useState(false);
-  const [schoolName, setSchoolName] = useState("");
-  const [municipio, setMunicipio] = useState("");
 
-  // Search establishments when DANE code changes
+  const [matchedSedes, setMatchedSedes] = useState<Sede[]>([]);
+  const [isLoading, setIsLoading]       = useState(false);
+  const [hasSearched, setHasSearched]   = useState(false);
+  const [schoolName, setSchoolName]     = useState("");
+  const [municipio, setMunicipio]       = useState("");
+  const [phoneError, setPhoneError]     = useState("");
+
+  // Búsqueda automática por código DANE con debounce
   useEffect(() => {
     const code = codigoEstablecimiento.trim();
     if (code.length >= 6) {
-      const delayDebounce = setTimeout(() => {
-        searchDANE(code);
-      }, 400);
-      return () => clearTimeout(delayDebounce);
+      const timer = setTimeout(() => searchDANE(code), 400);
+      return () => clearTimeout(timer);
     } else {
       setMatchedSedes([]);
       setSchoolName("");
@@ -57,22 +56,47 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
     }
   };
 
+  // ── Validación del número de teléfono ─────────────────────────────────
+  // Acepta solo dígitos, mínimo 7, máximo 15 (estándar internacional ITU-T E.164)
+  const validatePhone = (value: string): boolean => {
+    const digits = value.replace(/\D/g, "");
+    if (digits.length < 7) {
+      setPhoneError("El número debe tener al menos 7 dígitos.");
+      return false;
+    }
+    if (digits.length > 15) {
+      setPhoneError("El número no puede superar los 15 dígitos.");
+      return false;
+    }
+    setPhoneError("");
+    return true;
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Permite solo dígitos, espacios, guiones y paréntesis (formatos comunes de teléfono)
+    const raw = e.target.value.replace(/[^\d\s\-().+]/g, "");
+    setTelefono(raw);
+    if (raw.length > 0) validatePhone(raw);
+    else setPhoneError("");
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nombre || !telefono || !codigoEstablecimiento) {
       alert("Por favor diligencie todos los campos requeridos.");
       return;
     }
+    if (!validatePhone(telefono)) return;
     if (matchedSedes.length === 0) {
       alert("No se puede iniciar la encuesta sin un código DANE válido y sedes asociadas.");
       return;
     }
 
     const rector: RectorInfo = {
-      nombre: nombre.trim(),
+      nombre:                nombre.trim(),
       cargo,
-      telefono: telefono.trim(),
-      codigoEstablecimiento: codigoEstablecimiento.trim()
+      telefono:              telefono.trim(),
+      codigoEstablecimiento: codigoEstablecimiento.trim(),
     };
 
     onLoginSuccess(rector, matchedSedes);
@@ -81,8 +105,8 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
-        
-        {/* Top welcome banner */}
+
+        {/* Banner de bienvenida */}
         <div className="bg-[#006837] text-white p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="space-y-2">
             <span className="bg-[#F27D26] text-white text-xs font-bold px-2.5 py-1 rounded uppercase tracking-wider">
@@ -96,24 +120,24 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
             </p>
           </div>
           <div className="hidden lg:block">
-            {/* Outline of school/cap */}
             <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center text-[#F27D26] border-2 border-[#F27D26]/45">
               <School className="w-10 h-10" />
             </div>
           </div>
         </div>
 
-        {/* Access Form */}
+        {/* Formulario */}
         <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-6">
-          
-          {/* Section 1: Contact Info */}
+
+          {/* Sección 1: Información de contacto */}
           <div>
             <h3 className="text-sm font-bold text-[#006837] uppercase tracking-wider border-b border-slate-100 pb-2 mb-4 flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-[#006837]/10 text-[#006837] flex items-center justify-center text-xs font-bold">1</span>
               Información de Identificación
             </h3>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Nombre */}
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-[#006837]" />
@@ -129,6 +153,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                 />
               </div>
 
+              {/* Cargo */}
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
                   <Award className="w-3.5 h-3.5 text-[#006837]" />
@@ -145,6 +170,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                 </select>
               </div>
 
+              {/* Teléfono — CORRECCIÓN: validación real de formato */}
               <div>
                 <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5 text-[#006837]" />
@@ -155,14 +181,26 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                   required
                   placeholder="Ej: 3123456789"
                   value={telefono}
-                  onChange={(e) => setTelefono(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#006837] focus:border-[#006837] text-slate-800 placeholder-slate-400"
+                  onChange={handlePhoneChange}
+                  onBlur={() => telefono.length > 0 && validatePhone(telefono)}
+                  // Valida mínimo 7 y máximo 15 dígitos (estándar ITU-T E.164)
+                  pattern="[\d\s\-().+]{7,20}"
+                  title="Ingrese un número de teléfono válido (mínimo 7 dígitos)"
+                  maxLength={20}
+                  className={`w-full px-3 py-2 bg-slate-50 border rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#006837] text-slate-800 placeholder-slate-400 ${
+                    phoneError
+                      ? "border-red-400 focus:border-red-400 focus:ring-red-300"
+                      : "border-slate-200 focus:border-[#006837]"
+                  }`}
                 />
+                {phoneError && (
+                  <p className="text-[10px] text-red-500 font-semibold mt-1">{phoneError}</p>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Section 2: School DANE Lookup */}
+          {/* Sección 2: Búsqueda por código DANE */}
           <div>
             <h3 className="text-sm font-bold text-[#006837] uppercase tracking-wider border-b border-slate-100 pb-2 mb-4 flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-[#006837]/10 text-[#006837] flex items-center justify-center text-xs font-bold">2</span>
@@ -191,19 +229,29 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                 </div>
                 <div className="mt-2 text-xs text-slate-500 bg-slate-50 border border-slate-200 p-2.5 rounded flex items-start gap-1.5">
                   <span className="font-semibold text-[#006837]">Nota de ayuda:</span>
-                  <span>Puede probar ingresando el código de ejemplo provisto por la Secretaría de Educación: <button type="button" onClick={() => setCodigoEstablecimiento("105002000047")} className="text-[#006837] font-mono font-bold underline hover:text-[#004d29] transition-colors">105002000047</button> (Abejorral Celia Duque) o el <button type="button" onClick={() => setCodigoEstablecimiento("105003000012")} className="text-[#006837] font-mono font-bold underline hover:text-[#004d29] transition-colors">105003000012</button> (Yarumal Mariano de Jesús).</span>
+                  <span>
+                    Puede probar ingresando:{" "}
+                    <button type="button" onClick={() => setCodigoEstablecimiento("105002000047")} className="text-[#006837] font-mono font-bold underline hover:text-[#004d29]">
+                      105002000047
+                    </button>{" "}
+                    (Abejorral Celia Duque) o{" "}
+                    <button type="button" onClick={() => setCodigoEstablecimiento("105003000012")} className="text-[#006837] font-mono font-bold underline hover:text-[#004d29]">
+                      105003000012
+                    </button>{" "}
+                    (Yarumal Mariano de Jesús).
+                  </span>
                 </div>
               </div>
 
-              {/* Loader */}
+              {/* Cargando */}
               {isLoading && (
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded flex items-center justify-center gap-2">
-                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-[#006837] border-t-transparent"></div>
-                  <span className="text-xs text-slate-600 font-medium">Buscando establecimiento en la base de datos de Antioquia...</span>
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-[#006837] border-t-transparent" />
+                  <span className="text-xs text-slate-600 font-medium">Buscando en la base de datos de Antioquia...</span>
                 </div>
               )}
 
-              {/* Matched School Results */}
+              {/* Resultado de búsqueda */}
               {hasSearched && !isLoading && (
                 <div className="animate-fadeIn">
                   {matchedSedes.length > 0 ? (
@@ -211,26 +259,20 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                       <div className="flex items-start gap-3">
                         <CheckCircle2 className="w-5 h-5 text-[#006837] shrink-0 mt-0.5" />
                         <div>
-                          <h4 className="font-bold text-[#006837] text-sm leading-tight">
-                            Establecimiento Encontrado
-                          </h4>
+                          <h4 className="font-bold text-[#006837] text-sm leading-tight">Establecimiento Encontrado</h4>
                           <p className="text-[10px] text-slate-500 mt-1 uppercase font-semibold flex items-center gap-2.5">
                             <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> Municipio: {municipio}</span>
                             <span className="text-slate-300">|</span>
-                            <span>Código DANE: {codigoEstablecimiento}</span>
+                            <span>DANE: {codigoEstablecimiento}</span>
                           </p>
-                          <p className="text-sm font-extrabold text-slate-800 mt-1.5 italic">
-                            {schoolName}
-                          </p>
+                          <p className="text-sm font-extrabold text-slate-800 mt-1.5 italic">{schoolName}</p>
                         </div>
                       </div>
-
-                      {/* Associated branches list summary */}
                       <div className="border-t border-slate-200 pt-4">
                         <h5 className="text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-2">
-                          Sedes asociadas encontradas ({matchedSedes.length})
+                          Sedes encontradas ({matchedSedes.length})
                         </h5>
-                        <div className="max-h-44 overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="max-h-44 overflow-y-auto pr-2">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                             {matchedSedes.map((sede, idx) => (
                               <div
@@ -241,9 +283,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                                   <span className="font-bold text-slate-700 block text-[11px] truncate max-w-[200px]">
                                     {idx + 1}. {sede.nombreSede}
                                   </span>
-                                  <span className="text-[10px] text-slate-400 font-mono">
-                                    DANE: {sede.codigoSede}
-                                  </span>
+                                  <span className="text-[10px] text-slate-400 font-mono">DANE: {sede.codigoSede}</span>
                                 </div>
                                 <span className="text-[9px] font-bold bg-[#006837]/10 text-[#006837] py-0.5 px-2 rounded-full uppercase">
                                   {sede.zona}
@@ -258,14 +298,12 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                     <div className="bg-amber-50 border border-amber-200 rounded p-5 flex items-start gap-3.5">
                       <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                       <div className="space-y-1">
-                        <h4 className="font-bold text-amber-950 text-sm">
-                          Establecimiento no encontrado
-                        </h4>
+                        <h4 className="font-bold text-amber-950 text-sm">Establecimiento no encontrado</h4>
                         <p className="text-xs text-amber-800 leading-relaxed">
-                          El código DANE principal <span className="font-mono font-bold text-slate-900">{codigoEstablecimiento}</span> no tiene sedes asignadas en la base de datos de Antioquia.
+                          El código DANE <span className="font-mono font-bold text-slate-900">{codigoEstablecimiento}</span> no tiene sedes asignadas en la base de datos de Antioquia.
                         </p>
                         <p className="text-xs text-amber-800 leading-relaxed">
-                          Si usted es el administrador, puede importar el archivo de Excel oficial en el <strong className="text-[#006837]">Panel de Administración</strong> (esquina superior derecha) para cargar toda la base de datos escolar de la gobernación.
+                          Si usted es el administrador, puede importar el archivo Excel oficial en el <strong className="text-[#006837]">Panel de Administración</strong> para cargar la base de datos escolar.
                         </p>
                       </div>
                     </div>
@@ -275,7 +313,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
             </div>
           </div>
 
-          {/* Action button */}
+          {/* Botón de acción */}
           <div className="pt-4 border-t border-slate-100 flex justify-end">
             <button
               type="submit"
@@ -287,10 +325,9 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
               }`}
             >
               <span>Comenzar Diligenciamiento de Encuesta</span>
-              <span className="text-xs">→</span>
+              <span>→</span>
             </button>
           </div>
-
         </form>
       </div>
     </div>

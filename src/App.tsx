@@ -5,31 +5,33 @@ import SurveyForm from "./components/SurveyForm.tsx";
 import AdminPanel from "./components/AdminPanel.tsx";
 import { Sede, RectorInfo, SurveySubmission } from "./types.ts";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  CheckCircle, 
-  FileText, 
-  Download, 
-  ArrowLeft, 
-  Award, 
-  MapPin, 
+import {
+  CheckCircle,
+  FileText,
+  Download,
+  ArrowLeft,
+  Award,
+  MapPin,
   Calendar,
   Building2,
   Phone,
   Settings,
-  AlertTriangle
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
 
 export default function App() {
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [showAdminButton, setShowAdminButton] = useState(false);
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [passwordError, setPasswordError] = useState("");
+  const [isAdmin, setIsAdmin]                       = useState(false);
+  const [showAdminButton, setShowAdminButton]       = useState(false);
+  const [showPasswordModal, setShowPasswordModal]   = useState(false);
+  const [passwordInput, setPasswordInput]           = useState("");
+  const [passwordError, setPasswordError]           = useState("");
+  const [isAuthLoading, setIsAuthLoading]           = useState(false);
   const [showExitConfirmModal, setShowExitConfirmModal] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
+      const params    = new URLSearchParams(window.location.search);
       const adminParam = params.get("admin");
       if (adminParam === "true") {
         setShowAdminButton(true);
@@ -44,31 +46,61 @@ export default function App() {
     }
   }, []);
 
-  const handleToggleAdminClick = (val: boolean) => {
+  // ── Admin toggle ──────────────────────────────────────────────────────
+  const handleToggleAdminClick = async (val: boolean) => {
     if (val) {
       setPasswordInput("");
       setPasswordError("");
       setShowPasswordModal(true);
     } else {
+      // Cerrar sesión: invalidar token en el servidor
+      const token = sessionStorage.getItem("adminToken");
+      if (token) {
+        try {
+          await fetch("/api/auth/logout", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch {
+          // Si falla la red al cerrar sesión, igual limpiamos localmente
+        }
+        sessionStorage.removeItem("adminToken");
+      }
       setIsAdmin(false);
     }
   };
 
-  const handlePasswordSubmit = () => {
-    if (passwordInput === "Antioquia2026") {
-      setIsAdmin(true);
-      setShowPasswordModal(false);
-      setPasswordInput("");
-    } else {
-      setPasswordError("Contraseña incorrecta. Por favor intente de nuevo.");
+  // ── Validación de contraseña contra el servidor ───────────────────────
+  const handlePasswordSubmit = async () => {
+    if (!passwordInput.trim()) return;
+    setIsAuthLoading(true);
+    setPasswordError("");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: passwordInput }),
+      });
+
+      if (res.ok) {
+        const { token } = await res.json();
+        sessionStorage.setItem("adminToken", token);
+        setIsAdmin(true);
+        setShowPasswordModal(false);
+        setPasswordInput("");
+      } else {
+        setPasswordError("Contraseña incorrecta. Por favor intente de nuevo.");
+      }
+    } catch {
+      setPasswordError("Error de conexión con el servidor. Intente de nuevo.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
-  
-  // Rector session state
-  const [activeRector, setActiveRector] = useState<RectorInfo | null>(null);
-  const [activeSedes, setActiveSedes] = useState<Sede[]>([]);
-  
-  // Successful submission receipt state
+
+  // ── Sesión del rector ─────────────────────────────────────────────────
+  const [activeRector, setActiveRector]       = useState<RectorInfo | null>(null);
+  const [activeSedes, setActiveSedes]         = useState<Sede[]>([]);
   const [completedSubmission, setCompletedSubmission] = useState<SurveySubmission | null>(null);
 
   const handleLoginSuccess = (rector: RectorInfo, sedes: Sede[]) => {
@@ -79,7 +111,6 @@ export default function App() {
 
   const handleSurveySubmitted = (submission: SurveySubmission) => {
     setCompletedSubmission(submission);
-    // Clear active session to show receipt
     setActiveRector(null);
     setActiveSedes([]);
   };
@@ -99,14 +130,12 @@ export default function App() {
     setShowExitConfirmModal(false);
   };
 
+  // ── Descarga de soporte en texto plano ───────────────────────────────
   const handleDownloadReceipt = (sub: SurveySubmission) => {
     try {
       const dateStr = new Date(sub.fecha).toLocaleDateString("es-CO", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit"
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
       });
 
       let content = `======================================================
@@ -134,20 +163,16 @@ RESUMEN DE HARDWARE EN BUEN ESTADO:
 ---------------------------------------------
 `;
 
-      let totalTablets = 0;
-      let totalPortatiles = 0;
-      let totalEscritorios = 0;
-      let totalTVs = 0;
-      let totalPantallas = 0;
-      let totalProyectores = 0;
+      let totalTablets = 0, totalPortatiles = 0, totalEscritorios = 0;
+      let totalTVs = 0, totalPantallas = 0, totalProyectores = 0;
 
       sub.respuestasSedes.forEach((r, idx) => {
         const d = r.dispositivos;
-        totalTablets += d.tablets;
-        totalPortatiles += d.portatiles;
+        totalTablets     += d.tablets;
+        totalPortatiles  += d.portatiles;
         totalEscritorios += d.escritorio;
-        totalTVs += d.smartTv;
-        totalPantallas += d.pantallasInteractivas;
+        totalTVs         += d.smartTv;
+        totalPantallas   += d.pantallasInteractivas;
         totalProyectores += d.proyectores;
 
         content += `\nSede #${idx + 1}: ${r.nombreSede} (DANE: ${r.codigoSede})
@@ -178,9 +203,9 @@ ante la Secretaría de Educación de Antioquia.
 ======================================================`;
 
       const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
+      const url  = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href = url;
+      link.href  = url;
       link.download = `Soporte_Radicado_${sub.codigoEstablecimiento}.txt`;
       document.body.appendChild(link);
       link.click();
@@ -193,20 +218,17 @@ ante la Secretaría de Educación de Antioquia.
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-800 selection:bg-emerald-700 selection:text-white">
-      {/* Institutional Top Navbar */}
-      <Navbar 
-        isAdmin={isAdmin} 
-        setIsAdmin={handleToggleAdminClick} 
+      <Navbar
+        isAdmin={isAdmin}
+        setIsAdmin={handleToggleAdminClick}
         onExitSurvey={handleExitSurveyRequest}
         isInSurvey={activeRector !== null}
         showAdminButton={showAdminButton}
       />
 
-      {/* Main Content Area with transitions */}
       <div className="flex-1">
         <AnimatePresence mode="wait">
           {isAdmin ? (
-            /* ADMIN TAB VIEW */
             <motion.div
               key="admin"
               initial={{ opacity: 0, y: 15 }}
@@ -217,7 +239,6 @@ ante la Secretaría de Educación de Antioquia.
               <AdminPanel />
             </motion.div>
           ) : completedSubmission ? (
-            /* SUCCESS SUBMISSION RECEIPT VIEW */
             <motion.div
               key="receipt"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -245,8 +266,6 @@ ante la Secretaría de Educación de Antioquia.
                 </div>
 
                 <div className="p-6 md:p-8 space-y-6">
-                  
-                  {/* Metadata cards */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="p-4 rounded-xl border bg-gray-50/50 space-y-1.5 text-xs">
                       <div className="flex items-center gap-1.5 font-bold text-gray-700">
@@ -257,7 +276,6 @@ ante la Secretaría de Educación de Antioquia.
                       <p className="text-gray-500">Municipio: <span className="font-bold text-gray-700">{completedSubmission.municipio}</span></p>
                       <p className="text-gray-500">DANE Principal: <span className="font-mono text-gray-700 font-bold">{completedSubmission.codigoEstablecimiento}</span></p>
                     </div>
-
                     <div className="p-4 rounded-xl border bg-gray-50/50 space-y-1.5 text-xs">
                       <div className="flex items-center gap-1.5 font-bold text-gray-700">
                         <Award className="w-4 h-4 text-emerald-700" />
@@ -269,7 +287,6 @@ ante la Secretaría de Educación de Antioquia.
                     </div>
                   </div>
 
-                  {/* Submission detail reference card */}
                   <div className="p-4 rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/40 space-y-2 text-xs">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                       <div className="space-y-0.5">
@@ -283,16 +300,13 @@ ante la Secretaría de Educación de Antioquia.
                         <span className="font-bold text-gray-700 flex items-center gap-1 justify-end mt-0.5">
                           <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                           {new Date(completedSubmission.fecha).toLocaleDateString("es-CO", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "numeric"
+                            day: "2-digit", month: "2-digit", year: "numeric",
                           })}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Action buttons */}
                   <div className="pt-4 border-t flex flex-col sm:flex-row justify-between items-center gap-4">
                     <button
                       onClick={handleExitSurvey}
@@ -301,7 +315,6 @@ ante la Secretaría de Educación de Antioquia.
                       <ArrowLeft className="w-4 h-4" />
                       <span>Volver al Portal de Inicio</span>
                     </button>
-
                     <button
                       onClick={() => handleDownloadReceipt(completedSubmission)}
                       className="px-6 py-3 bg-[#D4AF37] hover:bg-amber-500 text-emerald-950 font-extrabold text-xs rounded-xl flex items-center gap-2 shadow transition-all cursor-pointer w-full sm:w-auto justify-center"
@@ -310,12 +323,10 @@ ante la Secretaría de Educación de Antioquia.
                       <span>Descargar Soporte Físico (TXT)</span>
                     </button>
                   </div>
-
                 </div>
               </div>
             </motion.div>
           ) : activeRector ? (
-            /* SURVEY FORM QUESTIONNAIRE VIEW */
             <motion.div
               key="survey"
               initial={{ opacity: 0, y: 15 }}
@@ -323,14 +334,13 @@ ante la Secretaría de Educación de Antioquia.
               exit={{ opacity: 0, y: -15 }}
               transition={{ duration: 0.25 }}
             >
-              <SurveyForm 
-                rector={activeRector} 
-                sedes={activeSedes} 
+              <SurveyForm
+                rector={activeRector}
+                sedes={activeSedes}
                 onSurveySubmitted={handleSurveySubmitted}
               />
             </motion.div>
           ) : (
-            /* LOGIN ACCESS PORTAL VIEW */
             <motion.div
               key="login"
               initial={{ opacity: 0, y: 15 }}
@@ -344,7 +354,7 @@ ante la Secretaría de Educación de Antioquia.
         </AnimatePresence>
       </div>
 
-      {/* Institutional footer */}
+      {/* Footer institucional */}
       <footer className="w-full bg-gray-900 text-gray-400 text-xs py-8 border-t border-gray-800 font-sans mt-auto">
         <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="space-y-2">
@@ -366,16 +376,16 @@ ante la Secretaría de Educación de Antioquia.
         </div>
       </footer>
 
-      {/* Admin Password Gate Modal */}
+      {/* ── Modal: contraseña de administrador ── */}
       <AnimatePresence>
         {showPasswordModal && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-50 p-4"
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.95, y: 15 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 15 }}
@@ -390,11 +400,12 @@ ante la Secretaría de Educación de Antioquia.
                   <p className="text-[10px] text-slate-200">Se requiere contraseña de seguridad</p>
                 </div>
               </div>
+
               <div className="p-5 space-y-4">
                 <p className="text-xs text-slate-500 leading-relaxed">
                   Para ingresar al Panel de Administración y gestionar la base de datos de sedes o exportar los reportes, ingrese la clave de seguridad institucional.
                 </p>
-                
+
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
                     Contraseña de Acceso
@@ -408,11 +419,10 @@ ante la Secretaría de Educación de Antioquia.
                       setPasswordError("");
                     }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handlePasswordSubmit();
-                      }
+                      if (e.key === "Enter") handlePasswordSubmit();
                     }}
-                    className="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#006837] focus:border-[#006837] text-slate-800"
+                    disabled={isAuthLoading}
+                    className="w-full px-3 py-2 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#006837] focus:border-[#006837] text-slate-800 disabled:opacity-60"
                     autoFocus
                   />
                   {passwordError && (
@@ -425,15 +435,24 @@ ante la Secretaría de Educación de Antioquia.
                 <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                   <button
                     onClick={() => setShowPasswordModal(false)}
-                    className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded transition-all"
+                    disabled={isAuthLoading}
+                    className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded transition-all disabled:opacity-60"
                   >
                     Cancelar
                   </button>
                   <button
                     onClick={handlePasswordSubmit}
-                    className="px-4 py-2 text-xs font-bold bg-[#006837] hover:bg-emerald-800 text-white rounded shadow-sm transition-all"
+                    disabled={isAuthLoading}
+                    className="px-4 py-2 text-xs font-bold bg-[#006837] hover:bg-emerald-800 text-white rounded shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-60"
                   >
-                    Ingresar
+                    {isAuthLoading ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Verificando...</span>
+                      </>
+                    ) : (
+                      <span>Ingresar</span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -441,14 +460,15 @@ ante la Secretaría de Educación de Antioquia.
           </motion.div>
         )}
 
+        {/* ── Modal: confirmación de salida de encuesta ── */}
         {showExitConfirmModal && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center z-50 p-4"
           >
-            <motion.div 
+            <motion.div
               initial={{ scale: 0.95, y: 15 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.95, y: 15 }}
@@ -465,13 +485,12 @@ ante la Secretaría de Educación de Antioquia.
               </div>
               <div className="p-6 space-y-4">
                 <p className="text-xs text-slate-600 leading-relaxed font-medium">
-                  ¿Está seguro que desea salir de la encuesta? Las respuestas que no hayan sido enviadas <span className="font-bold text-red-600">se perderán de manera definitiva</span>.
+                  ¿Está seguro que desea salir de la encuesta? Las respuestas que no hayan sido enviadas{" "}
+                  <span className="font-bold text-red-600">se perderán de manera definitiva</span>.
                 </p>
-                
                 <p className="text-[11px] text-slate-400">
                   Para guardar de manera permanente la información, asegúrese de diligenciar todas las sedes y hacer clic en el botón de "Enviar Censo Completo" al finalizar.
                 </p>
-
                 <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-150">
                   <button
                     onClick={() => setShowExitConfirmModal(false)}
