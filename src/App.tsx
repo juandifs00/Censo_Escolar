@@ -158,6 +158,7 @@ INFORMACIÓN DEL DIRECTIVO RESPONSABLE:
 Nombre Completo: ${sub.rector.nombre}
 Cargo:           ${sub.rector.cargo}
 Teléfono:        ${sub.rector.telefono}
+Correo:          ${sub.rector.correo}
 
 RESUMEN DE HARDWARE EN BUEN ESTADO:
 ---------------------------------------------
@@ -284,6 +285,7 @@ ante la Secretaría de Educación de Antioquia.
                       <p className="font-extrabold text-gray-800">{completedSubmission.rector.nombre}</p>
                       <p className="text-gray-500">Cargo: <span className="font-bold text-gray-700 uppercase">{completedSubmission.rector.cargo}</span></p>
                       <p className="text-gray-500">Teléfono: <span className="font-mono text-gray-700 font-bold">{completedSubmission.rector.telefono}</span></p>
+                      <p className="text-gray-500">Correo: <span className="font-mono text-gray-700 font-bold">{completedSubmission.rector.correo}</span></p>
                     </div>
                   </div>
 

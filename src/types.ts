@@ -12,6 +12,7 @@ export interface RectorInfo {
   nombre: string;
   cargo: string;
   telefono: string;
+  correo:                string;
   codigoEstablecimiento: string;
 }
 

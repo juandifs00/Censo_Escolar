@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Sede, RectorInfo } from "../types";
-import { Search, MapPin, School, Phone, User, Award, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { Search, MapPin, School, Phone, User, Award, ShieldAlert, CheckCircle2, Mail } from "lucide-react";
 
 interface RectorLoginProps {
   onLoginSuccess: (rector: RectorInfo, matchedSedes: Sede[]) => void;
@@ -10,6 +10,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
   const [nombre, setNombre]                               = useState("");
   const [cargo, setCargo]                                 = useState("Rector(a)");
   const [telefono, setTelefono]                           = useState("");
+  const [correo, setCorreo]                               = useState("");
   const [codigoEstablecimiento, setCodigoEstablecimiento] = useState("");
 
   const [matchedSedes, setMatchedSedes] = useState<Sede[]>([]);
@@ -57,15 +58,15 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
   };
 
   // ── Validación del número de teléfono ─────────────────────────────────
-  // Acepta solo dígitos, mínimo 7, máximo 15 (estándar internacional ITU-T E.164)
+  // Acepta solo dígitos, mínimo 10, máximo 10 (estándar internacional ITU-T E.164)
   const validatePhone = (value: string): boolean => {
     const digits = value.replace(/\D/g, "");
-    if (digits.length < 7) {
-      setPhoneError("El número debe tener al menos 7 dígitos.");
+    if (digits.length < 10) {
+      setPhoneError("El número debe tener al menos 10 dígitos.");
       return false;
     }
-    if (digits.length > 15) {
-      setPhoneError("El número no puede superar los 15 dígitos.");
+    if (digits.length > 10) {
+      setPhoneError("El número no puede superar los 10 dígitos.");
       return false;
     }
     setPhoneError("");
@@ -82,7 +83,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nombre || !telefono || !codigoEstablecimiento) {
+    if (!nombre || !telefono || !codigoEstablecimiento || !correo) {
       alert("Por favor diligencie todos los campos requeridos.");
       return;
     }
@@ -96,6 +97,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
       nombre:                nombre.trim(),
       cargo,
       telefono:              telefono.trim(),
+      correo:                correo.trim(),
       codigoEstablecimiento: codigoEstablecimiento.trim(),
     };
 
@@ -119,9 +121,13 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
               Bienvenido, señor rector o director educativo. Registre su información de contacto y cargue las sedes asociadas a su cargo para reportar el estado del parque tecnológico.
             </p>
           </div>
-          <div className="hidden lg:block">
-            <div className="w-20 h-20 rounded-full bg-white/10 flex items-center justify-center text-[#F27D26] border-2 border-[#F27D26]/45">
-              <School className="w-10 h-10" />
+          <div className="block">
+            <div className="w-50 h-25 bg-white/10 flex items-center justify-center text-[#F27D26] border-2 border-[#F27D26]/45">
+              <img
+              src="/logo_gobant.png"
+              alt="Logo institucional"
+              className="w-full h-full object-contain p-1"
+              />
             </div>
           </div>
         </div>
@@ -136,10 +142,10 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
               Información de Identificación
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Nombre */}
               <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
+                <label className="block text-[14px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
                   <User className="w-3.5 h-3.5 text-[#006837]" />
                   Nombre Completo <span className="text-red-500">*</span>
                 </label>
@@ -155,9 +161,9 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
 
               {/* Cargo */}
               <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
+                <label className="block text-[14px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
                   <Award className="w-3.5 h-3.5 text-[#006837]" />
-                  Cargo del Directivo <span className="text-red-500">*</span>
+                  Cargo <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={cargo}
@@ -167,12 +173,13 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                   <option value="Rector(a)">Rector(a)</option>
                   <option value="Secretaria">Secretaria</option>
                   <option value="Coordinador(a)">Coordinador(a)</option>
+                  <option value="Docente">Docente</option>
                 </select>
               </div>
 
               {/* Teléfono — CORRECCIÓN: validación real de formato */}
               <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
+                <label className="block text-[14px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5 text-[#006837]" />
                   Número Telefónico <span className="text-red-500">*</span>
                 </label>
@@ -183,10 +190,10 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                   value={telefono}
                   onChange={handlePhoneChange}
                   onBlur={() => telefono.length > 0 && validatePhone(telefono)}
-                  // Valida mínimo 7 y máximo 15 dígitos (estándar ITU-T E.164)
-                  pattern="[\d\s\-().+]{7,20}"
-                  title="Ingrese un número de teléfono válido (mínimo 7 dígitos)"
-                  maxLength={20}
+                  // Valida mínimo 10 y máximo 10 dígitos (estándar ITU-T E.164)
+                  pattern="[\d\s\-().+]{10,10}"
+                  title="Ingrese un número de teléfono válido (mínimo 10 dígitos)"
+                  maxLength={10}
                   className={`w-full px-3 py-2 bg-slate-50 border rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#006837] text-slate-800 placeholder-slate-400 ${
                     phoneError
                       ? "border-red-400 focus:border-red-400 focus:ring-red-300"
@@ -196,6 +203,22 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                 {phoneError && (
                   <p className="text-[10px] text-red-500 font-semibold mt-1">{phoneError}</p>
                 )}
+              </div>
+
+              {/* Correo Electrónico */}
+              <div>
+                <label className="block text-[14px] font-semibold text-slate-500 uppercase mb-1 flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5 text-[#006837]" />
+                  Correo Electrónico <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="Ej: rector@institucion.edu.co"
+                  value={correo}
+                  onChange={(e) => setCorreo(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#006837] focus:border-[#006837] text-slate-800 placeholder-slate-400"
+                />
               </div>
             </div>
           </div>
@@ -209,7 +232,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
 
             <div className="space-y-4">
               <div>
-                <label className="block text-[10px] font-semibold text-slate-500 uppercase mb-1.5 flex items-center gap-1.5">
+                <label className="block text-[14px] font-semibold text-slate-500 uppercase mb-1.5 flex items-center gap-1.5">
                   <Search className="w-3.5 h-3.5 text-[#006837]" />
                   Código DANE de la Sede Principal <span className="text-red-500">*</span>
                 </label>
@@ -234,11 +257,7 @@ export default function RectorLogin({ onLoginSuccess }: RectorLoginProps) {
                     <button type="button" onClick={() => setCodigoEstablecimiento("105002000047")} className="text-[#006837] font-mono font-bold underline hover:text-[#004d29]">
                       105002000047
                     </button>{" "}
-                    (Abejorral Celia Duque) o{" "}
-                    <button type="button" onClick={() => setCodigoEstablecimiento("105003000012")} className="text-[#006837] font-mono font-bold underline hover:text-[#004d29]">
-                      105003000012
-                    </button>{" "}
-                    (Yarumal Mariano de Jesús).
+                    (Abejorral Celia Duque)
                   </span>
                 </div>
               </div>
