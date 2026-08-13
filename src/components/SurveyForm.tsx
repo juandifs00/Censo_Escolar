@@ -139,24 +139,28 @@ export default function SurveyForm({ rector, sedes, onSurveySubmitted }: SurveyF
 
   // Modify acquisition origin checkboxes
   const handleOriginToggle = (origin: string) => {
-    if (!activeSede || !activeRes) return;
+    if (!activeSede) return;
 
-    const currentOrigins = [...activeRes.origenAdquisicion];
-    const index = currentOrigins.indexOf(origin);
+    setSedeResponses((prev) => {
+      const currentOrigins = [
+        ...(prev[activeSede.codigoSede]?.origenAdquisicion || [])
+      ];
+      const index = currentOrigins.indexOf(origin);
 
-    if (index > -1) {
-      currentOrigins.splice(index, 1);
-    } else {
-      currentOrigins.push(origin);
-    }
-
-    setSedeResponses((prev) => ({
-      ...prev,
-      [activeSede.codigoSede]: {
-        ...prev[activeSede.codigoSede],
-        origenAdquisicion: currentOrigins
+      if (index > -1) {
+        currentOrigins.splice(index, 1);
+      } else {
+        currentOrigins.push(origin);
       }
-    }));
+
+      return {
+        ...prev,
+        [activeSede.codigoSede]: {
+          ...prev[activeSede.codigoSede],
+          origenAdquisicion: currentOrigins
+        }
+      };
+    });
   };
 
   const handleOriginOtherText = (text: string) => {

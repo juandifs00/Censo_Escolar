@@ -288,10 +288,10 @@ app.get("/api/surveys/export/csv", requireAdmin, (_req, res) => {
     const field = (val: unknown): string => {
       if (val === undefined || val === null) return "";
       const str = String(val).replace(/"/g, '""');
-      return str.includes(",") || str.includes("\n") || str.includes('"') ? `"${str}"` : str;
+      return `${str}`;
     };
 
-    const rows = [fullHeaders.join(",")];
+    const rows = [fullHeaders.map(field).join(";")];
 
     for (const sub of submissions) {
       for (const sedeRes of sub.respuestasSedes) {
@@ -316,7 +316,7 @@ app.get("/api/surveys/export/csv", requireAdmin, (_req, res) => {
           sedeRes.dispositivosMalEstado?.proyectores          || 0,
           sedeRes.dispositivosMalEstado?.otrosCantidad        || 0,
           sedeRes.dispositivosMalEstado?.otrosDescripcion     || "",
-          (sedeRes.origenAdquisicion || []).join("; "),
+          (sedeRes.origenAdquisicion || []).join(" | "),
           sedeRes.origenOtroDetalle || "",
         ];
         for (const q of sedeQuestions) {
@@ -325,7 +325,7 @@ app.get("/api/surveys/export/csv", requireAdmin, (_req, res) => {
         for (const q of globalQuestions) {
           rowData.push((sub.respuestasGlobales || {})[q.id] || "");
         }
-        rows.push(rowData.map(field).join(","));
+        rows.push(rowData.map(field).join(";"));
       }
     }
 
