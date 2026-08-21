@@ -287,9 +287,19 @@ app.get("/api/surveys/export/csv", requireAdmin, (_req, res) => {
 
     const field = (val: unknown): string => {
       if (val === undefined || val === null) return "";
-      const str = String(val).replace(/"/g, '""');
-      return `${str}`;
-    };
+      // Eliminar saltos de línea internos
+      const str = String(val)
+      .replace(/\r\n/g, " ")
+      .replace(/\r/g, " ")
+      .replace(/\n/g, " ")
+      .trim();
+      
+      const escaped = str.replace(/"/g, '""');
+      // Poner comillas si contiene el separador, comillas o texto largo
+      return escaped.includes(";") || escaped.includes('"')
+      ? `"${escaped}"`
+      : escaped;
+    }
 
     const rows = [fullHeaders.map(field).join(";")];
 
