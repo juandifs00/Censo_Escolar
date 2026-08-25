@@ -5,87 +5,34 @@ import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { INITIAL_INSTITUTIONS } from "./src/data/initialInstitutions.js";
-import { Sede, SurveySubmission, CustomQuestion } from "./src/types.js";
+import {
+  Sede,
+  SurveySubmission,
+  CustomQuestion,
+  DeviceSedeResponse,
+} from "./src/types.js";
 
-const app  = express();
+const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
-// ══════════════════════════════════════════════════════════════════════════
-// AUTH — sesiones de administrador en memoria
-// ══════════════════════════════════════════════════════════════════════════
-const adminSessions   = new Map<string, number>(); // token → timestamp de expiración
-const SESSION_DURATION = 8 * 60 * 60 * 1000;       // 8 horas
-
-function requireAdmin(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) {
-  const auth = req.headers.authorization;
-  if (!auth?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "No autorizado. Sesión de administrador requerida." });
-  }
-  const token  = auth.slice(7);
-  const expiry = adminSessions.get(token);
-  if (!expiry || Date.now() > expiry) {
-    adminSessions.delete(token);
-    return res.status(401).json({ error: "Sesión expirada. Ingrese de nuevo al panel." });
-  }
-  next();
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// RATE LIMITER — sin dependencias externas
-// ══════════════════════════════════════════════════════════════════════════
-const ipCounts = new Map<string, { count: number; until: number }>();
-
-function rateLimit(maxRequests: number, windowMs: number) {
-  return (
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction
-  ) => {
-    const ip    = req.ip ?? req.socket.remoteAddress ?? "unknown";
-    const now   = Date.now();
-    const entry = ipCounts.get(ip);
-
-    if (!entry || now > entry.until) {
-      ipCounts.set(ip, { count: 1, until: now + windowMs });
-      return next();
-    }
-    if (entry.count >= maxRequests) {
-      return res.status(429).json({ error: "Demasiadas solicitudes. Espere un momento e intente de nuevo." });
-    }
-    entry.count++;
-    next();
-  };
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// DIRECTORIO DE DATOS Y RUTAS DE ARCHIVOS
-// ══════════════════════════════════════════════════════════════════════════
-const DATA_DIR        = path.join(process.cwd(), "data");
+const DATA_DIR = path.join(process.cwd(), "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
-const SUBMISSIONS_FILE  = path.join(DATA_DIR, "submissions.json");
-const QUESTIONS_FILE    = path.join(DATA_DIR, "custom_questions.json");
+const SUBMISSIONS_FILE = path.join(DATA_DIR, "submissions.json");
+const QUESTIONS_FILE = path.join(DATA_DIR, "custom_questions.json");
 const INSTITUTIONS_FILE = path.join(DATA_DIR, "institutions.json");
 
-// ══════════════════════════════════════════════════════════════════════════
-// HELPERS JSON SEGUROS
-// ══════════════════════════════════════════════════════════════════════════
 function readJSONFile<T>(filePath: string, defaultValue: T): T {
   try {
     if (fs.existsSync(filePath)) {
-      const raw = fs.readFileSync(filePath, "utf-8");
-      return JSON.parse(raw) as T;
+      return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
     }
   } catch (error) {
-    console.error(`[readJSONFile] Archivo dañado o ilegible: ${filePath}`, error);
-    // Crear respaldo antes de perder el archivo corrupto
+    console.error(`[readJSONFile] Archivo dañado: ${filePath}`, error);
     const backup = filePath + ".bak." + Date.now();
-    try { fs.copyFileSync(filePath, backup); } catch {}
-    console.warn(`[readJSONFile] Respaldo creado en: ${backup}`);
+    try {
+      fs.copyFileSync(filePath, backup);
+    } catch {}
   }
   return defaultValue;
 }
@@ -94,295 +41,440 @@ function writeJSONFile<T>(filePath: string, data: T): void {
   try {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
   } catch (error) {
-    console.error(`[writeJSONFile] Error al escribir: ${filePath}`, error);
+    console.error(`[writeJSONFile] Error: ${filePath}`, error);
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// ESTADO EN MEMORIA
-// ══════════════════════════════════════════════════════════════════════════
-let customQuestions: CustomQuestion[] = readJSONFile<CustomQuestion[]>(QUESTIONS_FILE, []);
-let submissions: SurveySubmission[]   = readJSONFile<SurveySubmission[]>(SUBMISSIONS_FILE, []);
-let institutions: Sede[]              = readJSONFile<Sede[]>(INSTITUTIONS_FILE, []);
-
+let customQuestions: CustomQuestion[] = readJSONFile<CustomQuestion[]>(
+  QUESTIONS_FILE,
+  [],
+);
+let submissions: SurveySubmission[] = readJSONFile<SurveySubmission[]>(
+  SUBMISSIONS_FILE,
+  [],
+);
+let institutions: Sede[] = readJSONFile<Sede[]>(INSTITUTIONS_FILE, []);
 if (institutions.length === 0) {
   institutions = INITIAL_INSTITUTIONS;
   writeJSONFile(INSTITUTIONS_FILE, institutions);
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// MIDDLEWARES GLOBALES
-// ══════════════════════════════════════════════════════════════════════════
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// ══════════════════════════════════════════════════════════════════════════
-// RUTAS DE AUTENTICACIÓN
-// ══════════════════════════════════════════════════════════════════════════
-app.post("/api/auth/login", rateLimit(10, 60_000), (req, res) => {
-  const { password } = req.body as { password?: string };
-  const adminPassword = process.env.ADMIN_PASSWORD;
-
-  if (!adminPassword) {
-    console.error("[auth] ADMIN_PASSWORD no está definido en las variables de entorno.");
-    return res.status(500).json({ error: "El servidor no está configurado correctamente. Contacte al administrador del sistema." });
+// Modo mantenimiento — activa con MAINTENANCE_MODE=true en Railway Variables
+app.use((req, res, next) => {
+  if (
+    process.env.MAINTENANCE_MODE === "true" &&
+    req.method === "POST" &&
+    req.path === "/api/surveys"
+  ) {
+    return res.status(503).json({
+      error:
+        "El sistema está temporalmente en mantenimiento. Por favor intente más tarde.",
+    });
   }
-  if (!password || password !== adminPassword) {
-    return res.status(401).json({ error: "Contraseña incorrecta." });
-  }
-
-  const token = crypto.randomUUID();
-  adminSessions.set(token, Date.now() + SESSION_DURATION);
-  res.json({ token });
+  next();
 });
 
-app.post("/api/auth/logout", (req, res) => {
-  const auth = req.headers.authorization;
-  if (auth?.startsWith("Bearer ")) {
-    adminSessions.delete(auth.slice(7));
-  }
-  res.json({ success: true });
-});
+// ── INSTITUCIONES ─────────────────────────────────────────────────────────
 
-// ══════════════════════════════════════════════════════════════════════════
-// RUTAS DE INSTITUCIONES
-// ══════════════════════════════════════════════════════════════════════════
-
-// Pública: búsqueda por código DANE (usada por el login del rector)
+// FASE 1: siempre devuelve TODAS las sedes del establecimiento principal,
+// aunque el codigo ingresado sea de una sede secundaria.
 app.get("/api/institutions/:codigo", (req, res) => {
   const { codigo } = req.params;
-  const filtered = institutions.filter(
-    (i) => i.codigoEstablecimiento === codigo || i.codigoSede === codigo
+  const match = institutions.find(
+    (i) => i.codigoEstablecimiento === codigo || i.codigoSede === codigo,
   );
-  res.json(filtered);
+  if (!match) {
+    return res.json({
+      sedes: [],
+      codigoEstablecimientoPrincipal: codigo,
+      nombreEstablecimiento: "",
+      municipio: "",
+      busquedaEsSecundaria: false,
+    });
+  }
+  const codigoPrincipal = match.codigoEstablecimiento;
+  const allSedes = institutions.filter(
+    (i) => i.codigoEstablecimiento === codigoPrincipal,
+  );
+  const enteredAsSecSede =
+    match.codigoSede === codigo && match.codigoEstablecimiento !== codigo;
+  const busquedaEsSecundaria =
+    enteredAsSecSede && match.establecimientoPrincipal !== "SI";
+  res.json({
+    sedes: allSedes,
+    codigoEstablecimientoPrincipal: codigoPrincipal,
+    nombreEstablecimiento: match.nombreEstablecimiento,
+    municipio: match.municipio,
+    busquedaEsSecundaria,
+    codigoPrincipalSugerido: busquedaEsSecundaria ? codigoPrincipal : undefined,
+  });
 });
 
-// Admin: retorna solo el conteo para evitar enviar miles de registros al cliente
-app.get("/api/institutions", requireAdmin, (_req, res) => {
-  res.json({ count: institutions.length });
-});
-
-// Admin: importar desde Excel procesado en el cliente
-app.post("/api/institutions/import", requireAdmin, (req, res) => {
+app.post("/api/institutions/import", (req, res) => {
   try {
     const data = req.body as Sede[];
-    if (!Array.isArray(data) || data.length === 0) {
-      return res.status(400).json({ error: "Formato de datos inválido. Debe ser una lista de sedes." });
-    }
-    const sample   = data[0];
-    const required = ["municipio", "codigoEstablecimiento", "nombreEstablecimiento", "codigoSede", "nombreSede"];
-    const missing  = required.filter((k) => !(k in sample));
-    if (missing.length > 0) {
-      return res.status(400).json({ error: `Las columnas no coinciden. Faltan: ${missing.join(", ")}` });
-    }
-
+    if (!Array.isArray(data) || data.length === 0)
+      return res.status(400).json({ error: "Formato de datos inválido." });
+    const required = [
+      "municipio",
+      "codigoEstablecimiento",
+      "nombreEstablecimiento",
+      "codigoSede",
+      "nombreSede",
+    ];
+    const missing = required.filter((k) => !(k in data[0]));
+    if (missing.length > 0)
+      return res
+        .status(400)
+        .json({ error: `Columnas faltantes: ${missing.join(", ")}` });
     institutions = data.map((item) => ({
-      municipio:                String(item.municipio || "").trim().toUpperCase(),
-      codigoEstablecimiento:    String(item.codigoEstablecimiento || "").trim(),
-      nombreEstablecimiento:    String(item.nombreEstablecimiento || "").trim().toUpperCase(),
-      establecimientoPrincipal: String(item.establecimientoPrincipal || "NO").trim().toUpperCase(),
-      codigoSede:               String(item.codigoSede || "").trim(),
-      nombreSede:               String(item.nombreSede || "").trim().toUpperCase(),
-      zona:                     String(item.zona || "RURAL").trim().toUpperCase(),
+      municipio: String(item.municipio || "")
+        .trim()
+        .toUpperCase(),
+      codigoEstablecimiento: String(item.codigoEstablecimiento || "").trim(),
+      nombreEstablecimiento: String(item.nombreEstablecimiento || "")
+        .trim()
+        .toUpperCase(),
+      establecimientoPrincipal: String(item.establecimientoPrincipal || "NO")
+        .trim()
+        .toUpperCase(),
+      codigoSede: String(item.codigoSede || "").trim(),
+      nombreSede: String(item.nombreSede || "")
+        .trim()
+        .toUpperCase(),
+      zona: String(item.zona || "RURAL")
+        .trim()
+        .toUpperCase(),
     }));
-
     writeJSONFile(INSTITUTIONS_FILE, institutions);
     res.json({ success: true, count: institutions.length });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Error al importar los datos." });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// Admin: restaurar base de datos al estado inicial
-app.post("/api/institutions/reset", requireAdmin, (_req, res) => {
+app.post("/api/institutions/reset", (_req, res) => {
   institutions = INITIAL_INSTITUTIONS;
   writeJSONFile(INSTITUTIONS_FILE, institutions);
   res.json({ success: true, count: institutions.length });
 });
 
-// ══════════════════════════════════════════════════════════════════════════
-// RUTAS DE PREGUNTAS ADICIONALES
-// ══════════════════════════════════════════════════════════════════════════
+// ── PREGUNTAS ─────────────────────────────────────────────────────────────
 
-// Pública: el formulario del rector necesita ver las preguntas activas
-app.get("/api/questions", (_req, res) => {
-  res.json(customQuestions);
-});
+app.get("/api/questions", (_req, res) => res.json(customQuestions));
 
-// Admin: crear nueva pregunta
-app.post("/api/questions", requireAdmin, (req, res) => {
+app.post("/api/questions", (req, res) => {
   try {
     const { pregunta, tipo, categoria, opciones, requerida } = req.body;
-    if (!pregunta || !tipo || !categoria) {
-      return res.status(400).json({ error: "Los campos 'pregunta', 'tipo' y 'categoria' son obligatorios." });
-    }
-    const newQuestion: CustomQuestion = {
-      id:        "q_" + Date.now().toString(36),
-      pregunta:  String(pregunta).trim(),
+    if (!pregunta || !tipo || !categoria)
+      return res.status(400).json({
+        error: "Campos 'pregunta', 'tipo' y 'categoria' obligatorios.",
+      });
+    const nq: CustomQuestion = {
+      id: "q_" + Date.now().toString(36),
+      pregunta: String(pregunta).trim(),
       tipo,
       categoria,
-      opciones:  opciones
-        ? String(opciones).split(",").map((o: string) => o.trim()).filter(Boolean)
+      opciones: opciones
+        ? String(opciones)
+            .split(",")
+            .map((o: string) => o.trim())
+            .filter(Boolean)
         : undefined,
       requerida: !!requerida,
       createdAt: new Date().toISOString(),
     };
-    customQuestions.push(newQuestion);
+    customQuestions.push(nq);
     writeJSONFile(QUESTIONS_FILE, customQuestions);
-    res.status(201).json(newQuestion);
+    res.status(201).json(nq);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Admin: eliminar pregunta por ID
-app.delete("/api/questions/:id", requireAdmin, (req, res) => {
-  const { id }    = req.params;
-  const before    = customQuestions.length;
-  customQuestions = customQuestions.filter((q) => q.id !== id);
-  if (customQuestions.length === before) {
-    return res.status(404).json({ error: "Pregunta no encontrada." });
-  }
+app.delete("/api/questions/:id", (req, res) => {
+  const before = customQuestions.length;
+  customQuestions = customQuestions.filter((q) => q.id !== req.params.id);
+  if (customQuestions.length === before)
+    return res.status(404).json({ error: "No encontrada." });
   writeJSONFile(QUESTIONS_FILE, customQuestions);
   res.json({ success: true });
 });
 
-// ══════════════════════════════════════════════════════════════════════════
-// RUTAS DE ENCUESTAS
-// IMPORTANTE: /export/csv debe declararse ANTES de /:id para evitar
-// que Express lo interprete como un ID con valor "export".
-// ══════════════════════════════════════════════════════════════════════════
+// ── ENCUESTAS ─────────────────────────────────────────────────────────────
 
-// Admin: listar todas las encuestas
-app.get("/api/surveys", requireAdmin, (_req, res) => {
-  res.json(submissions);
+app.get("/api/surveys", (_req, res) => res.json(submissions));
+
+// FASE 2: datos completos de encuesta existente para pre-poblar el formulario
+app.get("/api/surveys/data/:codigo", (req, res) => {
+  const existing = submissions.find(
+    (s) => s.codigoEstablecimiento === req.params.codigo,
+  );
+  if (!existing) return res.json({ exists: false });
+  res.json({ exists: true, submission: existing });
 });
 
-// Admin: exportar encuestas a CSV (debe ir ANTES que DELETE /:id)
-app.get("/api/surveys/export/csv", requireAdmin, (_req, res) => {
+// FASE 1: endpoint de estado (qué sedes ya tienen datos)
+app.get("/api/surveys/status/:codigo", (req, res) => {
+  const existing = submissions.find(
+    (s) => s.codigoEstablecimiento === req.params.codigo,
+  );
+  if (!existing) return res.json({ exists: false, sedesConDatos: [] });
+  const ultimaMod = (existing as any).ultimaModificacion || existing.fecha;
+  res.json({
+    exists: true,
+    rector: existing.rector.nombre,
+    ultimaModificacion: ultimaMod,
+    sedesConDatos: existing.respuestasSedes.map((s) => ({
+      codigoSede: s.codigoSede,
+      ultimaModificacion: ultimaMod,
+    })),
+  });
+});
+
+// Export CSV — DEBE estar antes de DELETE /:id
+app.get("/api/surveys/export/csv", (_req, res) => {
   try {
     const baseHeaders = [
-      "ID_ENCUESTA", "FECHA_ENVIO", "MUNICIPIO",
-      "CODIGO_ESTABLECIMIENTO", "NOMBRE_ESTABLECIMIENTO",
-      "CODIGO_SEDE", "NOMBRE_SEDE", "ZONA",
-      "NOMBRE_RECTOR", "CARGO_RECTOR", "TELEFONO_RECTOR", "CORREO_RECTOR",
-      "CANT_TABLETS_BUEN_ESTADO", "CANT_PORTATILES_BUEN_ESTADO",
-      "CANT_ESCRITORIO_BUEN_ESTADO", "CANT_SMART_TV_BUEN_ESTADO",
-      "CANT_PANTALLAS_INTERACTIVAS_BUEN_ESTADO", "CANT_PROYECTORES_BUEN_ESTADO",
-      "CANT_OTROS_BUEN_ESTADO", "DESCRIPCION_OTROS_BUEN_ESTADO",
-      "CANT_TABLETS_MAL_ESTADO", "CANT_PORTATILES_MAL_ESTADO",
-      "CANT_ESCRITORIO_MAL_ESTADO", "CANT_SMART_TV_MAL_ESTADO",
-      "CANT_PANTALLAS_INTERACTIVAS_MAL_ESTADO", "CANT_PROYECTORES_MAL_ESTADO",
-      "CANT_OTROS_MAL_ESTADO", "DESCRIPCION_OTROS_MAL_ESTADO",
-      "ORIGEN_ADQUISICION", "DETALLES_ORIGEN_OTRO",
+      "ID_ENCUESTA",
+      "FECHA_ENVIO",
+      "MUNICIPIO",
+      "CODIGO_ESTABLECIMIENTO",
+      "NOMBRE_ESTABLECIMIENTO",
+      "CODIGO_SEDE",
+      "NOMBRE_SEDE",
+      "ZONA",
+      "NOMBRE_RECTOR",
+      "CARGO_RECTOR",
+      "TELEFONO_RECTOR",
+      "CORREO_RECTOR",
+      "CANT_TABLETS_BUEN_ESTADO",
+      "CANT_PORTATILES_BUEN_ESTADO",
+      "CANT_ESCRITORIO_BUEN_ESTADO",
+      "CANT_SMART_TV_BUEN_ESTADO",
+      "CANT_PANTALLAS_INTERACTIVAS_BUEN_ESTADO",
+      "CANT_PROYECTORES_BUEN_ESTADO",
+      "CANT_OTROS_BUEN_ESTADO",
+      "DESCRIPCION_OTROS_BUEN_ESTADO",
+      "CANT_TABLETS_MAL_ESTADO",
+      "CANT_PORTATILES_MAL_ESTADO",
+      "CANT_ESCRITORIO_MAL_ESTADO",
+      "CANT_SMART_TV_MAL_ESTADO",
+      "CANT_PANTALLAS_INTERACTIVAS_MAL_ESTADO",
+      "CANT_PROYECTORES_MAL_ESTADO",
+      "CANT_OTROS_MAL_ESTADO",
+      "DESCRIPCION_OTROS_MAL_ESTADO",
+      "ORIGEN_ADQUISICION",
+      "DETALLES_ORIGEN_OTRO",
     ];
+    const sq = customQuestions.filter((q) => q.categoria === "sede");
+    const gq = customQuestions.filter((q) => q.categoria === "global");
 
-    const sedeQuestions   = customQuestions.filter((q) => q.categoria === "sede");
-    const globalQuestions = customQuestions.filter((q) => q.categoria === "global");
-    const customHeaders   = [
-      ...sedeQuestions.map((q)   => `PREG_SEDE_${q.pregunta.toUpperCase().replace(/[^A-Z0-9]/g, "_").substring(0, 30)}`),
-      ...globalQuestions.map((q) => `PREG_GLOBAL_${q.pregunta.toUpperCase().replace(/[^A-Z0-9]/g, "_").substring(0, 30)}`),
-    ];
-    const fullHeaders = [...baseHeaders, ...customHeaders];
-
+    // Correccion: eliminar saltos de linea y manejar comas en campos
     const field = (val: unknown): string => {
       if (val === undefined || val === null) return "";
-      // Eliminar saltos de línea internos
       const str = String(val)
-      .replace(/\r\n/g, " ")
-      .replace(/\r/g, " ")
-      .replace(/\n/g, " ")
-      .trim();
-      
-      const escaped = str.replace(/"/g, '""');
-      // Poner comillas si contiene el separador, comillas o texto largo
-      return escaped.includes(";") || escaped.includes('"')
-      ? `"${escaped}"`
-      : escaped;
-    }
+        .replace(/\r\n/g, " ")
+        .replace(/\r/g, " ")
+        .replace(/\n/g, " ")
+        .trim();
+      const esc = str.replace(/"/g, '""');
+      return esc.includes(",") || esc.includes('"') ? `"${esc}"` : esc;
+    };
 
-    const rows = [fullHeaders.map(field).join(";")];
+    const headers = [
+      ...baseHeaders,
+      ...sq.map(
+        (q) =>
+          `PREG_SEDE_${q.pregunta
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, "_")
+            .substring(0, 30)}`,
+      ),
+      ...gq.map(
+        (q) =>
+          `PREG_GLOBAL_${q.pregunta
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, "_")
+            .substring(0, 30)}`,
+      ),
+    ];
+    const rows = [headers.join(",")];
 
     for (const sub of submissions) {
-      for (const sedeRes of sub.respuestasSedes) {
-        const rowData: unknown[] = [
-          sub.id, sub.fecha, sub.municipio,
-          sub.codigoEstablecimiento, sub.nombreEstablecimiento,
-          sedeRes.codigoSede, sedeRes.nombreSede, sedeRes.zona,
-          sub.rector.nombre, sub.rector.cargo, sub.rector.telefono, sub.rector.correo,
-          sedeRes.dispositivos?.tablets              || 0,
-          sedeRes.dispositivos?.portatiles           || 0,
-          sedeRes.dispositivos?.escritorio           || 0,
-          sedeRes.dispositivos?.smartTv              || 0,
-          sedeRes.dispositivos?.pantallasInteractivas|| 0,
-          sedeRes.dispositivos?.proyectores          || 0,
-          sedeRes.dispositivos?.otrosCantidad        || 0,
-          sedeRes.dispositivos?.otrosDescripcion     || "",
-          sedeRes.dispositivosMalEstado?.tablets              || 0,
-          sedeRes.dispositivosMalEstado?.portatiles           || 0,
-          sedeRes.dispositivosMalEstado?.escritorio           || 0,
-          sedeRes.dispositivosMalEstado?.smartTv              || 0,
-          sedeRes.dispositivosMalEstado?.pantallasInteractivas|| 0,
-          sedeRes.dispositivosMalEstado?.proyectores          || 0,
-          sedeRes.dispositivosMalEstado?.otrosCantidad        || 0,
-          sedeRes.dispositivosMalEstado?.otrosDescripcion     || "",
-          (sedeRes.origenAdquisicion || []).join(" | "),
-          sedeRes.origenOtroDetalle || "",
+      for (const sr of sub.respuestasSedes) {
+        const row: unknown[] = [
+          sub.id,
+          sub.fecha,
+          sub.municipio,
+          sub.codigoEstablecimiento,
+          sub.nombreEstablecimiento,
+          sr.codigoSede,
+          sr.nombreSede,
+          sr.zona,
+          sub.rector.nombre,
+          sub.rector.cargo,
+          sub.rector.telefono,
+          (sub.rector as any).correo || "",
+          sr.dispositivos?.tablets || 0,
+          sr.dispositivos?.portatiles || 0,
+          sr.dispositivos?.escritorio || 0,
+          sr.dispositivos?.smartTv || 0,
+          sr.dispositivos?.pantallasInteractivas || 0,
+          sr.dispositivos?.proyectores || 0,
+          sr.dispositivos?.otrosCantidad || 0,
+          sr.dispositivos?.otrosDescripcion || "",
+          sr.dispositivosMalEstado?.tablets || 0,
+          sr.dispositivosMalEstado?.portatiles || 0,
+          sr.dispositivosMalEstado?.escritorio || 0,
+          sr.dispositivosMalEstado?.smartTv || 0,
+          sr.dispositivosMalEstado?.pantallasInteractivas || 0,
+          sr.dispositivosMalEstado?.proyectores || 0,
+          sr.dispositivosMalEstado?.otrosCantidad || 0,
+          sr.dispositivosMalEstado?.otrosDescripcion || "",
+          (sr.origenAdquisicion || []).join("; "),
+          sr.origenOtroDetalle || "",
         ];
-        for (const q of sedeQuestions) {
-          rowData.push((sedeRes.respuestasPreguntasAdicionales || {})[q.id] || "");
-        }
-        for (const q of globalQuestions) {
-          rowData.push((sub.respuestasGlobales || {})[q.id] || "");
-        }
-        rows.push(rowData.map(field).join(";"));
+        sq.forEach((q) =>
+          row.push((sr.respuestasPreguntasAdicionales || {})[q.id] || ""),
+        );
+        gq.forEach((q) => row.push((sub.respuestasGlobales || {})[q.id] || ""));
+        rows.push(row.map(field).join(","));
       }
     }
 
-    const csv = "\ufeff" + rows.join("\n"); // BOM para compatibilidad con Excel
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", "attachment; filename=Encuestas_Antioquia_Tecnologia.csv");
-    res.status(200).send(csv);
-  } catch (err: any) {
-    res.status(500).json({ error: "Fallo al exportar CSV: " + err.message });
-  }
-});
-
-// Pública (con rate limit): enviar encuesta desde el formulario del rector
-app.post("/api/surveys", rateLimit(5, 60_000), (req, res) => {
-  try {
-    const survey = req.body as SurveySubmission;
-    if (!survey.rector || !survey.codigoEstablecimiento || !survey.respuestasSedes) {
-      return res.status(400).json({ error: "Datos de encuesta incompletos." });
-    }
-    const newSubmission: SurveySubmission = {
-      ...survey,
-      id:    "sub_" + Date.now().toString(36) + "_" + crypto.randomUUID().slice(0, 6),
-      fecha: new Date().toISOString(),
-    };
-    submissions.push(newSubmission);
-    writeJSONFile(SUBMISSIONS_FILE, submissions);
-    res.status(201).json(newSubmission);
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Encuestas_Antioquia_Tecnologia.csv",
+    );
+    res.status(200).send("\ufeff" + rows.join("\n"));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Admin: eliminar una encuesta por ID
-app.delete("/api/surveys/:id", requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const before = submissions.length;
-  submissions  = submissions.filter((s) => s.id !== id);
-  if (submissions.length === before) {
-    return res.status(404).json({ error: "Encuesta no encontrada." });
+// FASE 1: merge en lugar de siempre crear nuevo registro
+function sedeConDatos(s: DeviceSedeResponse): boolean {
+  const d = s.dispositivos || ({} as any);
+  const dm = s.dispositivosMalEstado || ({} as any);
+  return (
+    [
+      d.tablets,
+      d.portatiles,
+      d.escritorio,
+      d.smartTv,
+      d.pantallasInteractivas,
+      d.proyectores,
+      d.otrosCantidad,
+      dm.tablets,
+      dm.portatiles,
+      dm.escritorio,
+      dm.smartTv,
+      dm.pantallasInteractivas,
+      dm.proyectores,
+      dm.otrosCantidad,
+    ].some((v) => (v || 0) > 0) ||
+    !!(
+      d.otrosDescripcion ||
+      dm.otrosDescripcion ||
+      (s.origenAdquisicion || []).length > 0 ||
+      Object.values(s.respuestasPreguntasAdicionales || {}).some((v) => v)
+    )
+  );
+}
+
+app.post("/api/surveys", (req, res) => {
+  try {
+    const survey = req.body as SurveySubmission;
+    if (
+      !survey.rector ||
+      !survey.codigoEstablecimiento ||
+      !survey.respuestasSedes
+    )
+      return res.status(400).json({ error: "Datos de encuesta incompletos." });
+
+    // Encontrar TODOS los registros del mismo establecimiento
+    const indices = submissions
+      .map((s, i) =>
+        s.codigoEstablecimiento === survey.codigoEstablecimiento ? i : -1,
+      )
+      .filter((i) => i !== -1);
+
+    if (indices.length === 0) {
+      // Crear nuevo registro
+      const newSub: SurveySubmission = {
+        ...survey,
+        id:
+          "sub_" +
+          Date.now().toString(36) +
+          "_" +
+          crypto.randomUUID().slice(0, 6),
+        fecha: new Date().toISOString(),
+      };
+      submissions.push(newSub);
+      writeJSONFile(SUBMISSIONS_FILE, submissions);
+      return res.status(201).json(newSub);
+    }
+
+    // Consolidar todos los duplicados en uno solo
+    const sedesMap = new Map<string, DeviceSedeResponse>();
+    let globalAnswers: Record<string, string> = {};
+
+    // Primero consolidar los existentes (el más reciente gana por sede)
+    for (const idx of indices) {
+      const existing = submissions[idx];
+      existing.respuestasSedes.forEach((s) => sedesMap.set(s.codigoSede, s));
+      globalAnswers = {
+        ...globalAnswers,
+        ...(existing.respuestasGlobales || {}),
+      };
+    }
+
+    // Luego aplicar los datos nuevos encima
+    for (const newSede of survey.respuestasSedes) {
+      if (!sedeConDatos(newSede)) continue;
+      sedesMap.set(newSede.codigoSede, newSede);
+    }
+    globalAnswers = { ...globalAnswers, ...survey.respuestasGlobales };
+
+    // Conservar solo el primer registro y eliminar los duplicados
+    const primaryIdx = indices[0];
+    const merged = {
+      ...submissions[primaryIdx],
+      rector: survey.rector,
+      respuestasSedes: Array.from(sedesMap.values()),
+      respuestasGlobales: globalAnswers,
+      ultimaModificacion: new Date().toISOString(),
+    } as any;
+
+    // Eliminar duplicados de atrás hacia adelante para no desplazar índices
+    indices
+      .slice(1)
+      .reverse()
+      .forEach((i) => submissions.splice(i, 1));
+    submissions[primaryIdx] = merged;
+
+    writeJSONFile(SUBMISSIONS_FILE, submissions);
+    res.status(200).json(merged);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
+});
+
+app.delete("/api/surveys/:id", (req, res) => {
+  const before = submissions.length;
+  submissions = submissions.filter((s) => s.id !== req.params.id);
+  if (submissions.length === before)
+    return res.status(404).json({ error: "No encontrada." });
   writeJSONFile(SUBMISSIONS_FILE, submissions);
   res.json({ success: true });
 });
 
-// ══════════════════════════════════════════════════════════════════════════
-// VITE / ARCHIVOS ESTÁTICOS
-// ══════════════════════════════════════════════════════════════════════════
+// ── VITE / ESTÁTICOS ──────────────────────────────────────────────────────
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -391,16 +483,13 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
+    const dist = path.join(process.cwd(), "dist");
+    app.use(express.static(dist));
+    app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
-  });
+  app.listen(PORT, "0.0.0.0", () =>
+    console.log(`✅ Servidor en http://localhost:${PORT}`),
+  );
 }
 
 startServer();
