@@ -79,6 +79,11 @@ app.use((req, res, next) => {
 
 // ── INSTITUCIONES ─────────────────────────────────────────────────────────
 
+// Conteo total de sedes para el panel de administración
+app.get("/api/institutions", (_req, res) => {
+  res.json({ count: institutions.length });
+});
+
 // FASE 1: siempre devuelve TODAS las sedes del establecimiento principal,
 // aunque el codigo ingresado sea de una sede secundaria.
 app.get("/api/institutions/:codigo", (req, res) => {
