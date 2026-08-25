@@ -12,7 +12,7 @@ export interface RectorInfo {
   nombre: string;
   cargo: string;
   telefono: string;
-  correo:                string;
+  correo: string;
   codigoEstablecimiento: string;
 }
 
@@ -33,7 +33,7 @@ export interface DeviceSedeResponse {
   zona: string;
   dispositivos: DeviceCounts;
   dispositivosMalEstado?: DeviceCounts;
-  origenAdquisicion: string[]; // 'recursos_propios' | 'donaciones' | 'gobernacion' | 'computadores_educar' | 'otro'
+  origenAdquisicion: string[];
   origenOtroDetalle?: string;
   respuestasPreguntasAdicionales: { [questionId: string]: string };
 }
@@ -45,6 +45,7 @@ export interface SurveySubmission {
   nombreEstablecimiento: string;
   municipio: string;
   fecha: string;
+  ultimaModificacion?: string; // ← nuevo: fecha del último merge
   respuestasSedes: DeviceSedeResponse[];
   respuestasGlobales?: { [questionId: string]: string };
 }
@@ -52,9 +53,32 @@ export interface SurveySubmission {
 export interface CustomQuestion {
   id: string;
   pregunta: string;
-  tipo: 'text' | 'number' | 'textarea' | 'select' | 'radio' | 'checkbox';
-  categoria: 'sede' | 'global'; // asked per branch or once for the whole institution
-  opciones?: string[]; // options split by comma
+  tipo: "text" | "number" | "textarea" | "select" | "radio" | "checkbox";
+  categoria: "sede" | "global";
+  opciones?: string[];
   requerida: boolean;
   createdAt: string;
+}
+
+// ── Fase 1: tipos para el estado de la encuesta por establecimiento ────────
+export interface SedeStatusInfo {
+  codigoSede: string;
+  ultimaModificacion: string;
+}
+
+export interface EncuestaStatus {
+  exists: boolean;
+  rector?: string;
+  ultimaModificacion?: string;
+  sedesConDatos: SedeStatusInfo[];
+}
+
+// ── Respuesta del endpoint de búsqueda de instituciones ───────────────────
+export interface InstitutionSearchResult {
+  sedes: Sede[];
+  codigoEstablecimientoPrincipal: string;
+  nombreEstablecimiento: string;
+  municipio: string;
+  busquedaEsSecundaria: boolean;
+  codigoPrincipalSugerido?: string;
 }

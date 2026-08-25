@@ -21,17 +21,19 @@ import {
 } from "lucide-react";
 
 export default function App() {
-  const [isAdmin, setIsAdmin]                       = useState(false);
-  const [showAdminButton, setShowAdminButton]       = useState(false);
-  const [showPasswordModal, setShowPasswordModal]   = useState(false);
-  const [passwordInput, setPasswordInput]           = useState("");
-  const [passwordError, setPasswordError]           = useState("");
-  const [isAuthLoading, setIsAuthLoading]           = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminButton, setShowAdminButton] = useState(false);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [showExitConfirmModal, setShowExitConfirmModal] = useState(false);
+  const [existingSubmission, setExistingSubmission] =
+    useState<SurveySubmission | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const params    = new URLSearchParams(window.location.search);
+      const params = new URLSearchParams(window.location.search);
       const adminParam = params.get("admin");
       if (adminParam === "true") {
         setShowAdminButton(true);
@@ -99,13 +101,19 @@ export default function App() {
   };
 
   // ── Sesión del rector ─────────────────────────────────────────────────
-  const [activeRector, setActiveRector]       = useState<RectorInfo | null>(null);
-  const [activeSedes, setActiveSedes]         = useState<Sede[]>([]);
-  const [completedSubmission, setCompletedSubmission] = useState<SurveySubmission | null>(null);
+  const [activeRector, setActiveRector] = useState<RectorInfo | null>(null);
+  const [activeSedes, setActiveSedes] = useState<Sede[]>([]);
+  const [completedSubmission, setCompletedSubmission] =
+    useState<SurveySubmission | null>(null);
 
-  const handleLoginSuccess = (rector: RectorInfo, sedes: Sede[]) => {
+  const handleLoginSuccess = (
+    rector: RectorInfo,
+    sedes: Sede[],
+    existing?: SurveySubmission,
+  ) => {
     setActiveRector(rector);
     setActiveSedes(sedes);
+    setExistingSubmission(existing ?? null);
     setCompletedSubmission(null);
   };
 
@@ -126,6 +134,7 @@ export default function App() {
   const handleExitSurvey = () => {
     setActiveRector(null);
     setActiveSedes([]);
+    setExistingSubmission(null);
     setCompletedSubmission(null);
     setShowExitConfirmModal(false);
   };
@@ -134,8 +143,11 @@ export default function App() {
   const handleDownloadReceipt = (sub: SurveySubmission) => {
     try {
       const dateStr = new Date(sub.fecha).toLocaleDateString("es-CO", {
-        day: "2-digit", month: "2-digit", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
       });
 
       let content = `======================================================
@@ -164,16 +176,20 @@ RESUMEN DE HARDWARE EN BUEN ESTADO:
 ---------------------------------------------
 `;
 
-      let totalTablets = 0, totalPortatiles = 0, totalEscritorios = 0;
-      let totalTVs = 0, totalPantallas = 0, totalProyectores = 0;
+      let totalTablets = 0,
+        totalPortatiles = 0,
+        totalEscritorios = 0;
+      let totalTVs = 0,
+        totalPantallas = 0,
+        totalProyectores = 0;
 
       sub.respuestasSedes.forEach((r, idx) => {
         const d = r.dispositivos;
-        totalTablets     += d.tablets;
-        totalPortatiles  += d.portatiles;
+        totalTablets += d.tablets;
+        totalPortatiles += d.portatiles;
         totalEscritorios += d.escritorio;
-        totalTVs         += d.smartTv;
-        totalPantallas   += d.pantallasInteractivas;
+        totalTVs += d.smartTv;
+        totalPantallas += d.pantallasInteractivas;
         totalProyectores += d.proyectores;
 
         content += `\nSede #${idx + 1}: ${r.nombreSede} (DANE: ${r.codigoSede})
@@ -204,9 +220,9 @@ ante la Secretaría de Educación de Antioquia.
 ======================================================`;
 
       const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-      const url  = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.href  = url;
+      link.href = url;
       link.download = `Soporte_Radicado_${sub.codigoEstablecimiento}.txt`;
       document.body.appendChild(link);
       link.click();
@@ -261,7 +277,9 @@ ante la Secretaría de Educación de Antioquia.
                       ¡Formulario Radicado con Éxito!
                     </h3>
                     <p className="text-xs text-emerald-100 max-w-md mx-auto mt-1">
-                      El reporte consolidado de su establecimiento educativo ha sido guardado de forma permanente en el sistema central de la gobernación.
+                      El reporte consolidado de su establecimiento educativo ha
+                      sido guardado de forma permanente en el sistema central de
+                      la gobernación.
                     </p>
                   </div>
                 </div>
@@ -273,36 +291,73 @@ ante la Secretaría de Educación de Antioquia.
                         <Building2 className="w-4 h-4 text-emerald-700" />
                         <span>INFORMACIÓN INSTITUCIONAL</span>
                       </div>
-                      <p className="font-extrabold text-[#006C3E] uppercase">{completedSubmission.nombreEstablecimiento}</p>
-                      <p className="text-gray-500">Municipio: <span className="font-bold text-gray-700">{completedSubmission.municipio}</span></p>
-                      <p className="text-gray-500">DANE Principal: <span className="font-mono text-gray-700 font-bold">{completedSubmission.codigoEstablecimiento}</span></p>
+                      <p className="font-extrabold text-[#006C3E] uppercase">
+                        {completedSubmission.nombreEstablecimiento}
+                      </p>
+                      <p className="text-gray-500">
+                        Municipio:{" "}
+                        <span className="font-bold text-gray-700">
+                          {completedSubmission.municipio}
+                        </span>
+                      </p>
+                      <p className="text-gray-500">
+                        DANE Principal:{" "}
+                        <span className="font-mono text-gray-700 font-bold">
+                          {completedSubmission.codigoEstablecimiento}
+                        </span>
+                      </p>
                     </div>
                     <div className="p-4 rounded-xl border bg-gray-50/50 space-y-1.5 text-xs">
                       <div className="flex items-center gap-1.5 font-bold text-gray-700">
                         <Award className="w-4 h-4 text-emerald-700" />
                         <span>DIRECTIVO RESPONSABLE</span>
                       </div>
-                      <p className="font-extrabold text-gray-800">{completedSubmission.rector.nombre}</p>
-                      <p className="text-gray-500">Cargo: <span className="font-bold text-gray-700 uppercase">{completedSubmission.rector.cargo}</span></p>
-                      <p className="text-gray-500">Teléfono: <span className="font-mono text-gray-700 font-bold">{completedSubmission.rector.telefono}</span></p>
-                      <p className="text-gray-500">Correo: <span className="font-mono text-gray-700 font-bold">{completedSubmission.rector.correo}</span></p>
+                      <p className="font-extrabold text-gray-800">
+                        {completedSubmission.rector.nombre}
+                      </p>
+                      <p className="text-gray-500">
+                        Cargo:{" "}
+                        <span className="font-bold text-gray-700 uppercase">
+                          {completedSubmission.rector.cargo}
+                        </span>
+                      </p>
+                      <p className="text-gray-500">
+                        Teléfono:{" "}
+                        <span className="font-mono text-gray-700 font-bold">
+                          {completedSubmission.rector.telefono}
+                        </span>
+                      </p>
+                      <p className="text-gray-500">
+                        Correo:{" "}
+                        <span className="font-mono text-gray-700 font-bold">
+                          {completedSubmission.rector.correo}
+                        </span>
+                      </p>
                     </div>
                   </div>
 
                   <div className="p-4 rounded-xl border-2 border-dashed border-emerald-200 bg-emerald-50/40 space-y-2 text-xs">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                       <div className="space-y-0.5">
-                        <span className="font-bold text-emerald-950 block">CÓDIGO DE RADICADO SEGURO</span>
+                        <span className="font-bold text-emerald-950 block">
+                          CÓDIGO DE RADICADO SEGURO
+                        </span>
                         <span className="font-mono text-[11px] bg-white border border-emerald-100 py-0.5 px-2 rounded text-emerald-800 font-bold">
                           {completedSubmission.id}
                         </span>
                       </div>
                       <div className="text-right">
-                        <span className="text-gray-400 block text-[10px] uppercase font-bold tracking-wider">Fecha Registro</span>
+                        <span className="text-gray-400 block text-[10px] uppercase font-bold tracking-wider">
+                          Fecha Registro
+                        </span>
                         <span className="font-bold text-gray-700 flex items-center gap-1 justify-end mt-0.5">
                           <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                          {new Date(completedSubmission.fecha).toLocaleDateString("es-CO", {
-                            day: "2-digit", month: "2-digit", year: "numeric",
+                          {new Date(
+                            completedSubmission.fecha,
+                          ).toLocaleDateString("es-CO", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
                           })}
                         </span>
                       </div>
@@ -339,6 +394,7 @@ ante la Secretaría de Educación de Antioquia.
               <SurveyForm
                 rector={activeRector}
                 sedes={activeSedes}
+                existingSubmission={existingSubmission ?? undefined}
                 onSurveySubmitted={handleSurveySubmitted}
               />
             </motion.div>
@@ -360,20 +416,30 @@ ante la Secretaría de Educación de Antioquia.
       <footer className="w-full bg-gray-900 text-gray-400 text-xs py-8 border-t border-gray-800 font-sans mt-auto">
         <div className="max-w-7xl mx-auto px-4 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="space-y-2">
-            <h5 className="font-bold text-gray-200">Gobernación de Antioquia</h5>
+            <h5 className="font-bold text-gray-200">
+              Gobernación de Antioquia
+            </h5>
             <p className="text-[11px] leading-relaxed">
-              Secretaría de Educación Departamental • Calle 42B Número 52-106 • Centro Administrativo Departamental "La Alpujarra" • Medellín, Colombia.
+              Secretaría de Educación Departamental • Calle 42B Número 52-106 •
+              Centro Administrativo Departamental "La Alpujarra" • Medellín,
+              Colombia.
             </p>
           </div>
           <div className="space-y-2">
             <h5 className="font-bold text-gray-200">Soporte Tecnológico</h5>
             <p className="text-[11px] leading-relaxed">
-              Para inconvenientes con el código DANE de su establecimiento principal, ingrese al Panel de Administración para verificar o cargar la base de datos de Excel correspondiente.
+              Para inconvenientes con el código DANE de su establecimiento
+              principal, ingrese al Panel de Administración para verificar o
+              cargar la base de datos de Excel correspondiente.
             </p>
           </div>
           <div className="space-y-1 md:text-right flex flex-col justify-center">
-            <span className="text-emerald-500 font-bold tracking-wide uppercase text-[10px]">Censo de Tecnología 2026</span>
-            <span className="text-[10px] text-gray-600">© Todos los derechos reservados • República de Colombia</span>
+            <span className="text-emerald-500 font-bold tracking-wide uppercase text-[10px]">
+              Censo de Tecnología 2026
+            </span>
+            <span className="text-[10px] text-gray-600">
+              © Todos los derechos reservados • República de Colombia
+            </span>
           </div>
         </div>
       </footer>
@@ -398,14 +464,20 @@ ante la Secretaría de Educación de Antioquia.
                   <Settings className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm tracking-tight">Acceso Administrativo</h4>
-                  <p className="text-[10px] text-slate-200">Se requiere contraseña de seguridad</p>
+                  <h4 className="font-bold text-sm tracking-tight">
+                    Acceso Administrativo
+                  </h4>
+                  <p className="text-[10px] text-slate-200">
+                    Se requiere contraseña de seguridad
+                  </p>
                 </div>
               </div>
 
               <div className="p-5 space-y-4">
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Para ingresar al Panel de Administración y gestionar la base de datos de sedes o exportar los reportes, ingrese la clave de seguridad institucional.
+                  Para ingresar al Panel de Administración y gestionar la base
+                  de datos de sedes o exportar los reportes, ingrese la clave de
+                  seguridad institucional.
                 </p>
 
                 <div>
@@ -481,17 +553,27 @@ ante la Secretaría de Educación de Antioquia.
                   <AlertTriangle className="w-5 h-5" />
                 </div>
                 <div>
-                  <h4 className="font-extrabold text-sm tracking-tight">¿Salir de la Encuesta?</h4>
-                  <p className="text-[10px] text-slate-100 font-sans">Confirmación de salida</p>
+                  <h4 className="font-extrabold text-sm tracking-tight">
+                    ¿Salir de la Encuesta?
+                  </h4>
+                  <p className="text-[10px] text-slate-100 font-sans">
+                    Confirmación de salida
+                  </p>
                 </div>
               </div>
               <div className="p-6 space-y-4">
                 <p className="text-xs text-slate-600 leading-relaxed font-medium">
-                  ¿Está seguro que desea salir de la encuesta? Las respuestas que no hayan sido enviadas{" "}
-                  <span className="font-bold text-red-600">se perderán de manera definitiva</span>.
+                  ¿Está seguro que desea salir de la encuesta? Las respuestas
+                  que no hayan sido enviadas{" "}
+                  <span className="font-bold text-red-600">
+                    se perderán de manera definitiva
+                  </span>
+                  .
                 </p>
                 <p className="text-[11px] text-slate-400">
-                  Para guardar de manera permanente la información, asegúrese de diligenciar todas las sedes y hacer clic en el botón de "Enviar Censo Completo" al finalizar.
+                  Para guardar de manera permanente la información, asegúrese de
+                  diligenciar todas las sedes y hacer clic en el botón de
+                  "Enviar Censo Completo" al finalizar.
                 </p>
                 <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-150">
                   <button
