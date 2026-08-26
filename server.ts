@@ -5,12 +5,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { INITIAL_INSTITUTIONS } from "./src/data/initialInstitutions.js";
-import {
-  Sede,
-  SurveySubmission,
-  CustomQuestion,
-  DeviceSedeResponse,
-} from "./src/types.js";
+import { Sede, SurveySubmission, CustomQuestion } from "./src/types.js";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -241,9 +236,24 @@ app.get("/api/surveys/status/:codigo", (req, res) => {
 });
 
 // Export CSV — DEBE estar antes de DELETE /:id
-app.get("/api/surveys/export/csv", (_req, res) => {
+app.get("/api/surveys/export/csv", async (_req, res) => {
   try {
-    const baseHeaders = [
+    const QUESTION_ALIASES: Record<string, string[]> = {
+      q_mt36953m: ["q_mrl9obm0"],
+      q_mt369tkz: ["q_mrl9sd4k"],
+    };
+    const getAnswer = (dic: Record<string, string>, qId: string): string => {
+      if (dic?.[qId]) return dic[qId];
+      for (const alias of QUESTION_ALIASES[qId] || []) {
+        if (dic?.[alias]) return dic[alias];
+      }
+      return "";
+    };
+
+    const sq = customQuestions.filter((q) => q.categoria === "sede");
+    const gq = customQuestions.filter((q) => q.categoria === "global");
+
+    const headers = [
       "ID_ENCUESTA",
       "FECHA_ENVIO",
       "MUNICIPIO",
@@ -274,24 +284,6 @@ app.get("/api/surveys/export/csv", (_req, res) => {
       "DESCRIPCION_OTROS_MAL_ESTADO",
       "ORIGEN_ADQUISICION",
       "DETALLES_ORIGEN_OTRO",
-    ];
-    const sq = customQuestions.filter((q) => q.categoria === "sede");
-    const gq = customQuestions.filter((q) => q.categoria === "global");
-
-    // Correccion: eliminar saltos de linea y manejar comas en campos
-    const field = (val: unknown): string => {
-      if (val === undefined || val === null) return "";
-      const str = String(val)
-        .replace(/\r\n/g, " ")
-        .replace(/\r/g, " ")
-        .replace(/\n/g, " ")
-        .trim();
-      const esc = str.replace(/"/g, '""');
-      return esc.includes(",") || esc.includes('"') ? `"${esc}"` : esc;
-    };
-
-    const headers = [
-      ...baseHeaders,
       ...sq.map(
         (q) =>
           `PREG_SEDE_${q.pregunta
@@ -307,11 +299,11 @@ app.get("/api/surveys/export/csv", (_req, res) => {
             .substring(0, 30)}`,
       ),
     ];
-    const rows = [headers.join(",")];
 
+    const dataRows: any[][] = [];
     for (const sub of submissions) {
       for (const sr of sub.respuestasSedes) {
-        const row: unknown[] = [
+        const row: any[] = [
           sub.id,
           sub.fecha,
           sub.municipio,
@@ -342,55 +334,50 @@ app.get("/api/surveys/export/csv", (_req, res) => {
           sr.dispositivosMalEstado?.otrosDescripcion || "",
           (sr.origenAdquisicion || []).join("; "),
           sr.origenOtroDetalle || "",
+          ...sq.map((q) =>
+            getAnswer(sr.respuestasPreguntasAdicionales || {}, q.id),
+          ),
+          ...gq.map((q) => getAnswer(sub.respuestasGlobales || {}, q.id)),
         ];
-        sq.forEach((q) =>
-          row.push((sr.respuestasPreguntasAdicionales || {})[q.id] || ""),
-        );
-        gq.forEach((q) => row.push((sub.respuestasGlobales || {})[q.id] || ""));
-        rows.push(row.map(field).join(","));
+        dataRows.push(row);
       }
     }
 
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    // Importar xlsx (ya está instalado como dependencia)
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
+
+    // Ancho de columnas automático basado en el contenido
+    const colWidths = headers.map((h, colIdx) => {
+      const maxLen = Math.max(
+        h.length,
+        ...dataRows.map((r) => String(r[colIdx] ?? "").length).slice(0, 100),
+      );
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 60) };
+    });
+    ws["!cols"] = colWidths;
+
+    // Congelar la primera fila (encabezados siempre visibles)
+    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+
+    XLSX.utils.book_append_sheet(wb, ws, "Censo 2026");
+
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
     res.setHeader(
       "Content-Disposition",
-      "attachment; filename=Encuestas_Antioquia_Tecnologia.csv",
+      "attachment; filename=Encuestas_Antioquia_Tecnologia.xlsx",
     );
-    res.status(200).send("\ufeff" + rows.join("\n"));
+    res.status(200).send(buffer);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
-
-// FASE 1: merge en lugar de siempre crear nuevo registro
-function sedeConDatos(s: DeviceSedeResponse): boolean {
-  const d = s.dispositivos || ({} as any);
-  const dm = s.dispositivosMalEstado || ({} as any);
-  return (
-    [
-      d.tablets,
-      d.portatiles,
-      d.escritorio,
-      d.smartTv,
-      d.pantallasInteractivas,
-      d.proyectores,
-      d.otrosCantidad,
-      dm.tablets,
-      dm.portatiles,
-      dm.escritorio,
-      dm.smartTv,
-      dm.pantallasInteractivas,
-      dm.proyectores,
-      dm.otrosCantidad,
-    ].some((v) => (v || 0) > 0) ||
-    !!(
-      d.otrosDescripcion ||
-      dm.otrosDescripcion ||
-      (s.origenAdquisicion || []).length > 0 ||
-      Object.values(s.respuestasPreguntasAdicionales || {}).some((v) => v)
-    )
-  );
-}
 
 app.post("/api/surveys", (req, res) => {
   try {
@@ -399,72 +386,21 @@ app.post("/api/surveys", (req, res) => {
       !survey.rector ||
       !survey.codigoEstablecimiento ||
       !survey.respuestasSedes
-    )
+    ) {
       return res.status(400).json({ error: "Datos de encuesta incompletos." });
-
-    // Encontrar TODOS los registros del mismo establecimiento
-    const indices = submissions
-      .map((s, i) =>
-        s.codigoEstablecimiento === survey.codigoEstablecimiento ? i : -1,
-      )
-      .filter((i) => i !== -1);
-
-    if (indices.length === 0) {
-      // Crear nuevo registro
-      const newSub: SurveySubmission = {
-        ...survey,
-        id:
-          "sub_" +
-          Date.now().toString(36) +
-          "_" +
-          crypto.randomUUID().slice(0, 6),
-        fecha: new Date().toISOString(),
-      };
-      submissions.push(newSub);
-      writeJSONFile(SUBMISSIONS_FILE, submissions);
-      return res.status(201).json(newSub);
     }
-
-    // Consolidar todos los duplicados en uno solo
-    const sedesMap = new Map<string, DeviceSedeResponse>();
-    let globalAnswers: Record<string, string> = {};
-
-    // Primero consolidar los existentes (el más reciente gana por sede)
-    for (const idx of indices) {
-      const existing = submissions[idx];
-      existing.respuestasSedes.forEach((s) => sedesMap.set(s.codigoSede, s));
-      globalAnswers = {
-        ...globalAnswers,
-        ...(existing.respuestasGlobales || {}),
-      };
-    }
-
-    // Luego aplicar los datos nuevos encima
-    for (const newSede of survey.respuestasSedes) {
-      if (!sedeConDatos(newSede)) continue;
-      sedesMap.set(newSede.codigoSede, newSede);
-    }
-    globalAnswers = { ...globalAnswers, ...survey.respuestasGlobales };
-
-    // Conservar solo el primer registro y eliminar los duplicados
-    const primaryIdx = indices[0];
-    const merged = {
-      ...submissions[primaryIdx],
-      rector: survey.rector,
-      respuestasSedes: Array.from(sedesMap.values()),
-      respuestasGlobales: globalAnswers,
-      ultimaModificacion: new Date().toISOString(),
-    } as any;
-
-    // Eliminar duplicados de atrás hacia adelante para no desplazar índices
-    indices
-      .slice(1)
-      .reverse()
-      .forEach((i) => submissions.splice(i, 1));
-    submissions[primaryIdx] = merged;
-
+    const newSubmission: SurveySubmission = {
+      ...survey,
+      id:
+        "sub_" +
+        Date.now().toString(36) +
+        "_" +
+        Math.random().toString(36).substring(2, 6),
+      fecha: new Date().toISOString(),
+    };
+    submissions.push(newSubmission);
     writeJSONFile(SUBMISSIONS_FILE, submissions);
-    res.status(200).json(merged);
+    res.status(201).json(newSubmission);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
