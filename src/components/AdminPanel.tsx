@@ -42,6 +42,23 @@ export default function AdminPanel() {
   const [errorMsg, setErrorMsg] = useState("");
   const [uploadProgress, setUploadProgress] = useState("");
 
+  const [progress, setProgress] = useState<{
+    establecimientos: {
+      total: number;
+      completos: number;
+      parciales: number;
+      pendientes: number;
+      respondidos: number;
+      porcentaje: number;
+    };
+    sedes: {
+      total: number;
+      respondidas: number;
+      pendientes: number;
+      porcentaje: number;
+    };
+  } | null>(null);
+
   // Formulario de nueva pregunta
   const [newQuestionText, setNewQuestionText] = useState("");
   const [newQuestionType, setNewQuestionType] =
@@ -61,11 +78,13 @@ export default function AdminPanel() {
     setErrorMsg("");
     try {
       const headers = getAdminHeaders();
-      const [surveysRes, questionsRes, instsRes] = await Promise.all([
-        fetch("/api/surveys", { headers }),
-        fetch("/api/questions"), // pública, sin auth
-        fetch("/api/institutions", { headers }),
-      ]);
+      const [surveysRes, questionsRes, instsRes, progressRes] =
+        await Promise.all([
+          fetch("/api/surveys", { headers }),
+          fetch("/api/questions"), // pública, sin auth
+          fetch("/api/institutions", { headers }),
+          fetch("/api/progress"),
+        ]);
 
       // Detectar sesión expirada en cualquiera de las llamadas protegidas
       if (surveysRes.status === 401 || instsRes.status === 401) {
@@ -87,6 +106,7 @@ export default function AdminPanel() {
         const instsData = await instsRes.json();
         setInstitutionsCount(instsData.count ?? 0);
       }
+      if (progressRes.ok) setProgress(await progressRes.json());
     } catch (err: any) {
       setErrorMsg("Error al cargar datos del servidor: " + err.message);
     } finally {
@@ -516,6 +536,17 @@ export default function AdminPanel() {
           </p>
         </div>
         <div className="flex gap-4">
+          <button
+            onClick={() => fetchData()}
+            disabled={isLoading}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Actualizar datos sin salir del panel"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isLoading ? "animate-spin" : ""}`}
+            />
+            <span>Actualizar</span>
+          </button>
           <div className="bg-[#006837]/10 border border-[#006837]/20 py-2 px-4 rounded text-center">
             <span className="text-[10px] font-bold text-[#006837] uppercase block tracking-wider">
               Base Escolar
@@ -588,7 +619,150 @@ export default function AdminPanel() {
 
       {/* ── TAB: RESPUESTAS ── */}
       {activeTab === "responses" && (
-        <div className="space-y-8">
+        <div className="space-y-8 animate-fadeIn">
+          {/* Tracker de progreso del censo */}
+          {progress && (
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
+              <h3 className="text-sm font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-[#006837]" />
+                Progreso del Censo — Establecimientos Respondidos
+              </h3>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center">
+                  <span className="text-[10px] font-bold text-emerald-700 uppercase block">
+                    Completas
+                  </span>
+                  <span className="text-2xl font-extrabold text-emerald-800 block mt-1">
+                    {progress.establecimientos.completos}
+                  </span>
+                  <span className="text-[10px] text-emerald-600">
+                    de {progress.establecimientos.total}
+                  </span>
+                </div>
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-center">
+                  <span className="text-[10px] font-bold text-blue-700 uppercase block">
+                    Parciales
+                  </span>
+                  <span className="text-2xl font-extrabold text-blue-800 block mt-1">
+                    {progress.establecimientos.parciales}
+                  </span>
+                  <span className="text-[10px] text-blue-600">
+                    faltan sedes
+                  </span>
+                </div>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+                  <span className="text-[10px] font-bold text-amber-700 uppercase block">
+                    Pendientes
+                  </span>
+                  <span className="text-2xl font-extrabold text-amber-800 block mt-1">
+                    {progress.establecimientos.pendientes}
+                  </span>
+                  <span className="text-[10px] text-amber-600">
+                    sin registro aún
+                  </span>
+                </div>
+                <div className="bg-[#006837]/5 border border-[#006837]/20 rounded-xl p-4 text-center">
+                  <span className="text-[10px] font-bold text-[#006837] uppercase block">
+                    Porcentaje de IE Completas
+                  </span>
+                  <span className="text-2xl font-extrabold text-[#006837] block mt-1">
+                    {progress.establecimientos.porcentaje}%
+                  </span>
+                  <span className="text-[10px] text-emerald-600">
+                    del total
+                  </span>
+                </div>
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-center">
+                  <span className="text-[10px] font-bold text-slate-600 uppercase block">
+                    Sedes Reportadas
+                  </span>
+                  <span className="text-2xl font-extrabold text-slate-800 block mt-1">
+                    {progress.sedes.respondidas}
+                  </span>
+                  <span className="text-[10px] text-slate-500">
+                    de {progress.sedes.total}
+                  </span>
+                </div>
+                <div className="bg-[#006837]/5 border border-[#006837]/20 rounded-xl p-4 text-center">
+                  <span className="text-[10px] font-bold text-[#006837] uppercase block">
+                    Porcentaje de Sedes Respondidas
+                  </span>
+                  <span className="text-2xl font-extrabold text-[#006837] block mt-1">
+                    {progress.sedes.porcentaje}%
+                  </span>
+                  <span className="text-[10px] text-emerald-600">
+                    del total
+                  </span>
+                </div>
+              </div>
+
+              {/* Barra de progreso — completas en verde, parciales en azul */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[10px] text-slate-500 font-semibold">
+                  <span>Cobertura de establecimientos</span>
+                  <span>
+                    {progress.establecimientos.completos} completas ·{" "}
+                    {progress.establecimientos.parciales} parciales ·{" "}
+                    {progress.establecimientos.pendientes} pendientes
+                  </span>
+                </div>
+                <div className="w-full bg-slate-100 h-3 rounded-full overflow-hidden flex">
+                  <div
+                    className="bg-[#006837] h-full transition-all duration-700"
+                    style={{
+                      width: `${(progress.establecimientos.completos / progress.establecimientos.total) * 100}%`,
+                    }}
+                  />
+                  <div
+                    className="bg-blue-400 h-full transition-all duration-700"
+                    style={{
+                      width: `${(progress.establecimientos.parciales / progress.establecimientos.total) * 100}%`,
+                    }}
+                  />
+                </div>
+                <div className="flex items-center gap-4 text-[10px] text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-sm bg-[#006837] inline-block" />{" "}
+                    Completas
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-sm bg-blue-400 inline-block" />{" "}
+                    Parciales
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 rounded-sm bg-slate-200 inline-block" />{" "}
+                    Pendientes
+                  </span>
+                </div>
+                <div className="pt-2 flex justify-end">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await fetch("/api/progress/report");
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = "Reporte_Cobertura_Censo.xlsx";
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                      } catch (err: any) {
+                        alert("Error al generar el reporte: " + err.message);
+                      }
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-[#006837] hover:bg-emerald-800 text-white text-xs font-bold rounded-lg transition-all"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Descargar Reporte de Cobertura</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Dispositivos en buen estado */}
           <div className="space-y-3">
             <h3 className="text-base font-extrabold text-slate-800 tracking-tight flex items-center gap-2">
@@ -713,14 +887,13 @@ export default function AdminPanel() {
                 </p>
               </div>
 
-              {/* CORRECCIÓN: botón en lugar de <a href> para poder enviar el header de auth */}
               {submissions.length > 0 && (
                 <button
                   onClick={handleExportCSV}
                   className="px-4 py-2 bg-[#F27D26] hover:bg-[#d96a1a] text-white font-bold text-xs uppercase tracking-wider rounded shadow transition-all cursor-pointer flex items-center gap-2"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Exportar Consolidado a CSV (Excel)</span>
+                  <span>Exportar Consolidado a Excel</span>
                 </button>
               )}
             </div>
