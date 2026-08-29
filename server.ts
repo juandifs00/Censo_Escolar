@@ -204,6 +204,206 @@ app.delete("/api/questions/:id", (req, res) => {
   res.json({ success: true });
 });
 
+// Progreso del censo: establecimientos respondidos vs pendientes
+app.get("/api/progress", (_req, res) => {
+  // Construir mapa: codigoEstablecimiento → total de sedes que tiene
+  const sedesPorEst = new Map<string, number>();
+  for (const inst of institutions) {
+    sedesPorEst.set(
+      inst.codigoEstablecimiento,
+      (sedesPorEst.get(inst.codigoEstablecimiento) || 0) + 1,
+    );
+  }
+
+  // Para cada establecimiento con submissions, contar cuántas sedes únicas reportó
+  const sedesReporPorEst = new Map<string, number>();
+  for (const sub of submissions) {
+    const cod = sub.codigoEstablecimiento;
+    const yaReportadas = sedesReporPorEst.get(cod) || 0;
+    // Contar sedes únicas (por si hay duplicados de envíos)
+    const sedesEnEsteEnvio = new Set(
+      sub.respuestasSedes.map((s) => s.codigoSede),
+    ).size;
+    sedesReporPorEst.set(cod, Math.max(yaReportadas, sedesEnEsteEnvio));
+  }
+
+  let completos = 0; // todas sus sedes respondidas
+  let parciales = 0; // al menos una sede, pero no todas
+  let pendientes = 0; // ninguna sede respondida
+
+  for (const [cod, totalSedes] of sedesPorEst) {
+    const reportadas = sedesReporPorEst.get(cod) || 0;
+    if (reportadas === 0) pendientes++;
+    else if (reportadas >= totalSedes) completos++;
+    else parciales++;
+  }
+
+  const totalEst = sedesPorEst.size;
+  const respondidos = completos + parciales; // tienen al menos algo
+  const sedesResp = submissions.reduce(
+    (acc, s) => acc + new Set(s.respuestasSedes.map((r) => r.codigoSede)).size,
+    0,
+  );
+
+  res.json({
+    establecimientos: {
+      total: totalEst,
+      completos,
+      parciales,
+      pendientes,
+      respondidos,
+      porcentaje: totalEst > 0 ? Math.round((completos / totalEst) * 100) : 0,
+    },
+    sedes: {
+      total: institutions.length,
+      respondidas: sedesResp,
+      pendientes: institutions.length - sedesResp,
+      porcentaje:
+        institutions.length > 0
+          ? Math.round((sedesResp / institutions.length) * 100)
+          : 0,
+    },
+  });
+});
+
+// Reporte de cobertura: qué instituciones han respondido, de forma parcial o no han respondido
+app.get("/api/progress/report", async (_req, res) => {
+  try {
+    // Construir mapa de sedes esperadas por establecimiento
+    const estMap = new Map<
+      string,
+      {
+        nombre: string;
+        municipio: string;
+        sedes: Set<string>;
+      }
+    >();
+    for (const inst of institutions) {
+      if (!estMap.has(inst.codigoEstablecimiento)) {
+        estMap.set(inst.codigoEstablecimiento, {
+          nombre: inst.nombreEstablecimiento,
+          municipio: inst.municipio,
+          sedes: new Set(),
+        });
+      }
+      estMap.get(inst.codigoEstablecimiento)!.sedes.add(inst.codigoSede);
+    }
+
+    // Construir mapa de sedes ya respondidas por establecimiento
+    const respMap = new Map<
+      string,
+      {
+        sedes: Set<string>;
+        fecha: string;
+        rector: string;
+      }
+    >();
+    for (const sub of submissions) {
+      if (!respMap.has(sub.codigoEstablecimiento)) {
+        respMap.set(sub.codigoEstablecimiento, {
+          sedes: new Set(),
+          fecha: sub.fecha,
+          rector: sub.rector.nombre,
+        });
+      }
+      const entry = respMap.get(sub.codigoEstablecimiento)!;
+      sub.respuestasSedes.forEach((s) => entry.sedes.add(s.codigoSede));
+      if (sub.fecha > entry.fecha) {
+        entry.fecha = sub.fecha;
+        entry.rector = sub.rector.nombre;
+      }
+    }
+
+    // Construir filas del reporte
+    const ORDEN_ESTADO: Record<string, number> = {
+      PENDIENTE: 0,
+      PARCIAL: 1,
+      COMPLETO: 2,
+    };
+
+    const rows = [];
+    for (const [cod, est] of estMap) {
+      const resp = respMap.get(cod);
+      const totalSedes = est.sedes.size;
+      const sedesResp = resp ? resp.sedes.size : 0;
+      const sedesFalt = Math.max(0, totalSedes - sedesResp);
+      const estado =
+        sedesResp === 0
+          ? "PENDIENTE"
+          : sedesResp >= totalSedes
+            ? "COMPLETO"
+            : "PARCIAL";
+
+      // Sedes que faltan (códigos)
+      const codigosFaltantes = resp
+        ? [...est.sedes].filter((s) => !resp.sedes.has(s)).join(", ")
+        : [...est.sedes].join(", ");
+
+      rows.push({
+        ESTADO: estado,
+        MUNICIPIO: est.municipio,
+        CODIGO_ESTABLECIMIENTO: cod,
+        NOMBRE_ESTABLECIMIENTO: est.nombre,
+        TOTAL_SEDES: totalSedes,
+        SEDES_RESPONDIDAS: sedesResp,
+        SEDES_FALTANTES: sedesFalt,
+        "COBERTURA_%":
+          totalSedes > 0 ? Math.round((sedesResp / totalSedes) * 100) : 0,
+        FECHA_ULTIMO_ENVIO: resp
+          ? new Date(resp.fecha).toLocaleString("es-CO", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "—",
+        RECTOR_RESPONSABLE: resp ? resp.rector : "—",
+        CODIGOS_SEDES_FALTANTES: codigosFaltantes,
+      });
+    }
+
+    // Ordenar: Pendientes → Parciales → Completos; dentro de cada grupo por municipio
+    rows.sort(
+      (a, b) =>
+        ORDEN_ESTADO[a.ESTADO] - ORDEN_ESTADO[b.ESTADO] ||
+        a.MUNICIPIO.localeCompare(b.MUNICIPIO),
+    );
+
+    const XLSX = await import("xlsx");
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Cobertura Censo");
+
+    ws["!cols"] = [
+      { wch: 11 }, // ESTADO
+      { wch: 15 }, // MUNICIPIO
+      { wch: 23 }, // CODIGO_ESTABLECIMIENTO
+      { wch: 46 }, // NOMBRE_ESTABLECIMIENTO
+      { wch: 13 }, // TOTAL_SEDES
+      { wch: 18 }, // SEDES_RESPONDIDAS
+      { wch: 16 }, // SEDES_FALTANTES
+      { wch: 12 }, // COBERTURA_%
+      { wch: 20 }, // FECHA_ULTIMO_ENVIO
+      { wch: 32 }, // RECTOR_RESPONSABLE
+      { wch: 60 }, // CODIGOS_SEDES_FALTANTES
+    ];
+
+    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Reporte_Cobertura_Censo.xlsx",
+    );
+    res.status(200).send(buffer);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── ENCUESTAS ─────────────────────────────────────────────────────────────
 
 app.get("/api/surveys", (_req, res) => res.json(submissions));
