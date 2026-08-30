@@ -49,25 +49,48 @@ export default function App() {
   }, []);
 
   // ── Admin toggle ──────────────────────────────────────────────────────
-  const handleToggleAdminClick = (val: boolean) => {
+  const handleToggleAdminClick = async (val: boolean) => {
     if (val) {
       setPasswordInput("");
       setPasswordError("");
       setShowPasswordModal(true);
     } else {
+      // Cerrar sesión en el servidor
+      const token = sessionStorage.getItem("adminToken");
+      if (token) {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+        sessionStorage.removeItem("adminToken");
+      }
       setIsAdmin(false);
     }
   };
 
-  const handlePasswordSubmit = () => {
-    const adminPassword = "Antioquia2026";
-    if (passwordInput === adminPassword) {
-      setIsAdmin(true);
-      setShowPasswordModal(false);
-      setPasswordInput("");
-      setPasswordError("");
-    } else {
-      setPasswordError("Contraseña incorrecta. Por favor intente de nuevo.");
+  const handlePasswordSubmit = async () => {
+    if (!passwordInput.trim()) return;
+    setIsAuthLoading(true);
+    setPasswordError("");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: passwordInput }),
+      });
+      if (res.ok) {
+        const { token } = await res.json();
+        sessionStorage.setItem("adminToken", token);
+        setIsAdmin(true);
+        setShowPasswordModal(false);
+        setPasswordInput("");
+      } else {
+        setPasswordError("Contraseña incorrecta. Por favor intente de nuevo.");
+      }
+    } catch {
+      setPasswordError("Error de conexión con el servidor. Intente de nuevo.");
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 

@@ -57,6 +57,37 @@ if (institutions.length === 0) {
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+// ── Sistema de sesiones de administrador ─────────────────────────────────
+const adminSessions = new Map<string, number>();
+const SESSION_DURATION = 8 * 60 * 60 * 1000;
+
+app.post("/api/auth/login", (req, res) => {
+  const { password } = req.body as { password?: string };
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminPassword) {
+    console.error("[auth] ADMIN_PASSWORD no definido en variables de entorno.");
+    return res
+      .status(500)
+      .json({ error: "El servidor no está configurado correctamente." });
+  }
+  if (!password || password !== adminPassword) {
+    return res.status(401).json({ error: "Contraseña incorrecta." });
+  }
+
+  const token = crypto.randomUUID();
+  adminSessions.set(token, Date.now() + SESSION_DURATION);
+  res.json({ token });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  const auth = req.headers.authorization;
+  if (auth?.startsWith("Bearer ")) {
+    adminSessions.delete(auth.slice(7));
+  }
+  res.json({ success: true });
+});
+
 // Modo mantenimiento — activa con MAINTENANCE_MODE=true en Railway Variables
 app.use((req, res, next) => {
   if (
@@ -240,10 +271,14 @@ app.get("/api/progress", (_req, res) => {
 
   const totalEst = sedesPorEst.size;
   const respondidos = completos + parciales; // tienen al menos algo
-  const sedesResp = submissions.reduce(
-    (acc, s) => acc + new Set(s.respuestasSedes.map((r) => r.codigoSede)).size,
-    0,
-  );
+  // Contar sedes únicas reportadas (sin duplicar por múltiples submissions)
+  const sedesUnicas = new Set<string>();
+  for (const sub of submissions) {
+    for (const sede of sub.respuestasSedes) {
+      sedesUnicas.add(`${sub.codigoEstablecimiento}__${sede.codigoSede}`);
+    }
+  }
+  const sedesResp = sedesUnicas.size;
 
   res.json({
     establecimientos: {
@@ -410,28 +445,73 @@ app.get("/api/surveys", (_req, res) => res.json(submissions));
 
 // FASE 2: datos completos de encuesta existente para pre-poblar el formulario
 app.get("/api/surveys/data/:codigo", (req, res) => {
-  const existing = submissions.find(
+  const todas = submissions.filter(
     (s) => s.codigoEstablecimiento === req.params.codigo,
   );
-  if (!existing) return res.json({ exists: false });
-  res.json({ exists: true, submission: existing });
+  if (todas.length === 0) return res.json({ exists: false });
+
+  // Construir una submission consolidada: la más reciente gana por sede
+  const sedesMap = new Map<string, any>();
+  let globalAnswers: Record<string, string> = {};
+
+  // Ordenar de más antigua a más reciente para que la más reciente sobreescriba
+  const ordenadas = [...todas].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  for (const sub of ordenadas) {
+    for (const sede of sub.respuestasSedes) {
+      sedesMap.set(sede.codigoSede, sede);
+    }
+    globalAnswers = { ...globalAnswers, ...(sub.respuestasGlobales || {}) };
+  }
+
+  const masReciente = ordenadas[ordenadas.length - 1];
+
+  res.json({
+    exists: true,
+    submission: {
+      ...masReciente,
+      respuestasSedes: Array.from(sedesMap.values()),
+      respuestasGlobales: globalAnswers,
+    },
+  });
 });
 
 // FASE 1: endpoint de estado (qué sedes ya tienen datos)
 app.get("/api/surveys/status/:codigo", (req, res) => {
-  const existing = submissions.find(
+  // Buscar TODAS las submissions del establecimiento, no solo la primera
+  const todas = submissions.filter(
     (s) => s.codigoEstablecimiento === req.params.codigo,
   );
-  if (!existing) return res.json({ exists: false, sedesConDatos: [] });
-  const ultimaMod = (existing as any).ultimaModificacion || existing.fecha;
+  if (todas.length === 0) return res.json({ exists: false, sedesConDatos: [] });
+
+  // Unión de todas las sedes reportadas en cualquier submission
+  const sedesMap = new Map<string, string>(); // codigoSede → ultimaMod
+  for (const sub of todas) {
+    const mod = (sub as any).ultimaModificacion || sub.fecha;
+    for (const s of sub.respuestasSedes) {
+      // Si la sede ya está, quedarse con la fecha más reciente
+      if (
+        !sedesMap.has(s.codigoSede) ||
+        mod > (sedesMap.get(s.codigoSede) ?? "")
+      ) {
+        sedesMap.set(s.codigoSede, mod);
+      }
+    }
+  }
+
+  // Tomar el rector del envío más reciente
+  const masReciente = todas.reduce((a, b) => (a.fecha > b.fecha ? a : b));
+
   res.json({
     exists: true,
-    rector: existing.rector.nombre,
-    ultimaModificacion: ultimaMod,
-    sedesConDatos: existing.respuestasSedes.map((s) => ({
-      codigoSede: s.codigoSede,
-      ultimaModificacion: ultimaMod,
-    })),
+    rector: masReciente.rector.nombre,
+    ultimaModificacion: masReciente.fecha,
+    sedesConDatos: [...sedesMap.entries()].map(
+      ([codigoSede, ultimaModificacion]) => ({
+        codigoSede,
+        ultimaModificacion,
+      }),
+    ),
   });
 });
 
